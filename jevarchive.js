@@ -1,7 +1,7 @@
 //@name jevarchive
-//@display-name 🏛️JevArchive 2.0.0
+//@display-name 🏛️JevArchive 2.0.1
 //@api 3.0
-//@version 2.0.0
+//@version 2.0.1
 //@update-url https://raw.githubusercontent.com/happydesk213124/JevArchive2/main/jevarchive.js
 //@arg jev_api_key string (선택) Jev API 키. JevArchive 화면의 설정에서 넣어도 됩니다.
 
@@ -3619,8 +3619,10 @@ details.more.danger summary{color:var(--tx2)}
 .mcard:hover{border-color:var(--ac)}
 .mcard .mh{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--tx3);margin-bottom:6px;flex-wrap:wrap}
 .mcard .mh b{color:var(--tx2)}
-.mcard .ml{display:flex;gap:8px;align-items:baseline;font-size:13.5px;line-height:1.55;padding:2px 0}
+.mcard .ml{display:flex;gap:8px;align-items:baseline;font-size:13.5px;line-height:1.55;padding:2px 6px;margin:0 -6px;border-radius:8px}
+.mcard .ml:hover{background:rgba(255,255,255,.06)}
 .mcard .ml .slot{flex:none;font-size:10.5px;padding:1px 6px}
+.mcard .ml .mpin{flex:none;font-size:11px}
 .mcard .ml.low{opacity:.55}
 .mcard .ml span:last-child{min-width:0;word-break:break-all}
 @media (min-width:900px){
@@ -3683,6 +3685,7 @@ details.more.danger summary{color:var(--tx2)}
   const TITLES = { now: '지금', people: '인물과 관계', promises: '약속 · 비밀', memory: '기억', nodes: '기억 마디', cards: '연출 카드', news: '업데이트 내역', settings: '설정' };
   // 업데이트 내역 (새 버전이 위)
   const CHANGELOG = [
+    ['2.0.1', '2026-11-04', ['기억 탭에서 긴 답장의 문단(조각)을 하나씩 눌러 열 수 있어요. 예전엔 어느 문단을 눌러도 첫 조각이 열려서 📌 고정도 첫 조각에만 걸렸어요. 📌 표시도 고정한 그 문단 줄에 붙어요.']],
     ['2.0.0', '2026-11-04', ['기억을 완전히 새로 만들었어요. 원문을 문장으로 쪼개거나 요약하지 않고, 원문 조각을 그대로 넣어요. 짧은 메시지는 통째로, 긴 답장은 문단 몇 개씩이에요.', '조각마다 날짜 · 장소(상태창)와 꼬리표(종류 · 누가 · 누구랑 · 누구에게 · 무엇 · 어떻게 · 왜 · 모르게 할 사람)를 붙여요. Jev는 고르기만 하고 원문은 안 바꿔요. "어제 · 지난주"에는 실제 날짜를 같이 적어요.', '보낼 때 Jev가 이번 턴에 나올 인물을 골라요. 그 인물끼리 관계를 넣고, 그 인물이 나온 기억 · 뜻이 가까운 기억 · 낱말이 겹치는 기억을 모아 Jev가 심사해요. 기억 자리를 거의 다 기억에 써요.', '만남 기록: 두 인물이 같이 나온 기억을 날짜 · 장소별로 묶어요. 관계 줄에 처음 · 최근 만남(언제 · 어디서 · 무엇)이 들어가고, 인물 탭의 관계에서 펼쳐 볼 수 있어요.', '바뀐 정보: 새 기억이 옛 기억을 바꾸면(장소 · 비밀번호 · 계획 …) 표시하고, 옛 기억을 넣을 땐 새 기억도 같이 넣어요.', '인물 로어북 켜기: 이번 턴 인물의 이름 · 별명이 키인 로어북을 켜요 (예전 "기억으로 로어북 켜기"를 대신해요). 인물이 잘 안 바뀌어서 캐시에도 좋아요.', '이름표 꼬리 자동 합침: 미연_maid_form · 미연_2 · 미연(교복)은 미연으로 합쳐요. 인물 탭에서 펼쳐서 분리할 수 있어요.', '빠진 것: 문장 기억 · 칸 줄 · 기억 마디(마디 탭) · 명함 · 물건 이력 줄 · 모으기 인물 표. 연출 카드 · 친밀도 · 인물 · 약속 탭은 그대로예요.', '업데이트 뒤 한 번 "지금 전부 정리"를 눌러 주세요 (기억을 새 방식으로 다시 만들어요).']],
     ['1.0.21', '2026-11-02', ['긴 채팅(메시지 500개 넘게)에서 정리하다 화면이 멈추던 것 고침. 최신 정보 판정이 옛 기억 전부를 하나씩 비교하느라 560개 채팅에서 2분 넘게 멈췄어요. 이제 같은 결과를 몇 초 안에, 화면을 멈추지 않고 내요. 진행도 보여요.', '동시 요청 10개 제한을 없앴어요.', '설정 › 연결 › Jev › 모델 한도: 요청 한 번 최대 토큰(기본 16384)과 고르기 보기 최대 수(기본 255)를 모델에 맞게 바꿀 수 있어요. 넘으면 글을 줄이거나 나눠 보내요.', '긴 요청은 기다리는 시간도 길게 잡아요 (시간 초과로 다시 보내는 일 줄임).']],
     ['1.0.20', '2026-10-28', ['인물 명함 (기본 켬): 장면 인물 · 장소로 이어진 인물(빵집 → 빵집 사장) · 로어북에 나온 인물마다 처음 소개 원문, 나를 부르는 호칭, 존댓말/반말, 최근 한 말 원문 2개를 한 줄로 넣어요. 메인 모델이 그 인물을 꺼낼 때 호칭 · 말투를 지어내지 않게요.', '물건 이력 (기본 켬): 물려받음 · 삼 · 선물 · 빌려줌 · 잃어버림 · 돌려줌을 모아 물건마다 언제 · 어디서 · 누가 → 누구 · 지금 누가 가졌는지 알려 줘요.', '요청에서 새로 들어온 글 읽기 (기본 켬): 이번 요청에 새로 켜진 로어북 글도 기억 찾기에 쓰고, 거기 나온 인물을 장면 인물로 봐요.', '따옴표 없는 이름표(민수: 형, 오늘도 컵라면이야?)의 이름도 인물로 등록해요. 전에는 따옴표가 있어야만 돼서 인물이 빠지곤 했어요.', '명함 · 물건 줄은 기억 줄 예산과 따로 써서 기존 기억 줄이 줄지 않아요.']],
@@ -4215,11 +4218,12 @@ details.more.danger summary{color:var(--tx2)}
   function msgCard(mi, list, q = '') {
     const c = clockOf(mi);
     const first = list.slice().sort((a, b) => a.pos - b.pos || a.si - b.si);
-    const ck = `${timeline[mi]?.key ?? 'x'}:${first[0].pos}`;
-    const pinned = first.some(f => story.pins.includes(`${timeline[mi]?.key ?? 'x'}:${f.pos}`));
+    const key = timeline[mi]?.key ?? 'x';
+    const ck = `${key}:${first[0].pos}`;
     const who = timeline[mi]?.role === 'user' ? '나' : escapeHtml(characterCache.name || '캐릭터');
-    return `<button class="mcard" data-act="chunk" data-ck="${escapeHtml(ck)}"><div class="mh"><b>#${mi + 1} · ${who}</b>${c.dt ? `<span>${escapeHtml(c.dt)}</span>` : ''}${c.place ? `<span>· ${escapeHtml(clip(c.place, 24))}</span>` : ''}${pinned ? '<span>📌</span>' : ''}</div>
-      ${first.map(f => `<div class="ml${(f.w ?? 3) < 1.5 ? ' low' : ''}">${FACT_KO[f.k] ? `<span class="slot kind k-${f.k}">${FACT_KO[f.k]}</span>` : ''}${f.k === 'secret' ? `<span class="spoil" data-act="spoil" title="눌러서 보기 · 다시 누르면 가리기">${escapeHtml(f.sent)}</span>` : `<span>${q ? highlight(f.sent, q) : escapeHtml(f.sent)}</span>`}</div>`).join('')}</button>`;
+    // 문단(조각)마다 따로 눌린다: 줄을 누르면 그 조각, 머리(#번호)를 누르면 첫 조각. 📌는 고정한 그 줄에
+    return `<button class="mcard" data-act="chunk" data-ck="${escapeHtml(ck)}"><div class="mh"><b>#${mi + 1} · ${who}</b>${c.dt ? `<span>${escapeHtml(c.dt)}</span>` : ''}${c.place ? `<span>· ${escapeHtml(clip(c.place, 24))}</span>` : ''}</div>
+      ${first.map(f => { const fck = `${key}:${f.pos}`; return `<div class="ml${(f.w ?? 3) < 1.5 ? ' low' : ''}" data-act="chunk" data-ck="${escapeHtml(fck)}">${story.pins.includes(fck) ? '<span class="mpin">📌</span>' : ''}${FACT_KO[f.k] ? `<span class="slot kind k-${f.k}">${FACT_KO[f.k]}</span>` : ''}${f.k === 'secret' ? `<span class="spoil" data-act="spoil" title="눌러서 보기 · 다시 누르면 가리기">${escapeHtml(f.sent)}</span>` : `<span>${q ? highlight(f.sent, q) : escapeHtml(f.sent)}</span>`}</div>`; }).join('')}</button>`;
   }
   /** 문장 목록 → 메시지 카드 (order: 'new' | 'old' | 'keep' = 들어온 순서 그대로) */
   function msgCards(list, order, limit, q = '') {
