@@ -1,7 +1,7 @@
 //@name jevarchive
-//@display-name 🏛️JevArchive 2.0.2
+//@display-name 🏛️JevArchive 2.0.3
 //@api 3.0
-//@version 2.0.2
+//@version 2.0.3
 //@update-url https://raw.githubusercontent.com/happydesk213124/JevArchive2/main/jevarchive.js
 //@arg jev_api_key string (선택) Jev API 키. JevArchive 화면의 설정에서 넣어도 됩니다.
 
@@ -3487,6 +3487,7 @@ a{color:var(--ac)}
   .app{grid-template-columns:232px 1fr}
   .rail{display:flex;flex-direction:column;gap:4px;padding:18px 12px;border-right:1px solid var(--line);background:var(--bg2)}
   .tabbar{display:none}
+  .seg.cswitch{display:none}
   .scroll{padding:24px 28px 40px}
   .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 18px;font-weight:800;letter-spacing:-.02em;font-size:17px}
   .brand .logo{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:var(--bg3,#1b2130);font-size:17px}
@@ -3768,7 +3769,7 @@ pre.raw{white-space:pre-wrap;word-break:break-word;margin:8px 0 0;padding:12px;b
 .ccard .when{font-size:12px;color:var(--tx3)}
 .ccard .txt{font-size:13px;color:var(--tx2);line-height:1.55}
 .ccard .acts{display:flex;gap:6px;margin-top:2px}
-.qcsec{margin-top:18px}
+.cswitch{align-self:flex-start;max-width:100%}
 .qcsec .chip{cursor:pointer}
 .qcsec .chip.on{background:var(--s3);color:var(--tx);border-color:var(--ac)}
 .qcsec .chip.offp{opacity:.5;text-decoration:line-through}
@@ -3876,6 +3877,7 @@ details.more.danger summary{color:var(--tx2)}
     alert: 'M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
     db: 'M12 8c4.4 0 8-1.3 8-3s-3.6-3-8-3-8 1.3-8 3 3.6 3 8 3zM4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
     film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M16 9h4M4 15h4M16 15h4',
+    ask: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
     clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
     news: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
     node: 'M6 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM18 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM12 21a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM8.4 6.2l7.2 1.3M7.2 7.9l3.8 8.4M16.9 9.8l-3.8 6.4',
@@ -3887,10 +3889,13 @@ details.more.danger summary{color:var(--tx2)}
   const avatar = (name, cls = '') => `<span class="av ${cls}" style="--h:${hueOf(name)}">${escapeHtml(String(name ?? '?').trim().slice(0, 1) || '?')}</span>`;
   const kpiBox = (v, label) => `<div class="kpi"><b>${v}</b><span>${label}</span></div>`;
   const secs = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}초` : `${ms}ms`);
-  const VIEWS = [['now', '지금', 'now'], ['people', '인물', 'people'], ['promises', '약속·비밀', 'promise'], ['memory', '기억', 'memory'], ['cards', '연출 카드', 'film'], ['news', '업데이트', 'news'], ['settings', '설정', 'settings']];
-  const TITLES = { now: '지금', people: '인물과 관계', promises: '약속 · 비밀', memory: '기억', nodes: '기억 마디', cards: '연출 카드', news: '업데이트 내역', settings: '설정' };
+  const VIEWS = [['now', '지금', 'now'], ['people', '인물', 'people'], ['promises', '약속·비밀', 'promise'], ['memory', '기억', 'memory'], ['cards', '연출 카드', 'film'], ['qcards', '질문 카드', 'ask'], ['news', '업데이트', 'news'], ['settings', '설정', 'settings']];
+  const TITLES = { now: '지금', people: '인물과 관계', promises: '약속 · 비밀', memory: '기억', nodes: '기억 마디', cards: '연출 카드', qcards: '질문 카드', news: '업데이트 내역', settings: '설정' };
+  // 폰 아래 탭에 안 넣는 칸 → 그동안 켜 둘 탭 (탭이 늘면 좁은 폰에서 두 줄로 넘친다)
+  const TAB_OF = { news: 'settings', qcards: 'cards' };
   // 업데이트 내역 (새 버전이 위)
   const CHANGELOG = [
+    ['2.0.3', '2026-11-04', ['질문 카드를 메뉴의 연출 카드 바로 밑 따로 칸으로 옮겼어요. 폰은 아래 탭을 6칸 그대로 두고(두 줄이 안 되게), 연출 카드 화면 맨 위 [연출 카드 | 질문 카드] 버튼으로 오가요.']],
     ['2.0.2', '2026-11-04', [
       '질문 카드 (기본 켬): 평소 롤플 턴엔 무엇을 기억해 와야 할지 흐려요. 이번 턴 인물을 고르는 같은 Jev 요청에서, 사람이 써 둔 질문 60장(기본 20 · 로맨스 · 일상 · 미스터리 · 판타지 · 공포 8장씩) 중 지금 장면에 맞는 걸 골라 그 질문으로 기억을 찾고 "이 질문의 답이면 3점"으로 심사해요. 메인 모델에는 안 보내요. 연출 카드 화면 아래에서 켜기 · 세기(가끔 2 · 보통 4 · 자주 6개) · 묶음 · 카드 켜기 · 내 카드를 정해요.',
       '연출 카드와 이어 주기: 기억이 있어야 살릴 수 있는 연출 49장에 질문을 짝지었어요 (떡밥 회수 → 앞서 나온 떡밥 · 물건의 내력). 감독이 그 연출을 고른 턴엔 그 질문으로 기억도 같이 찾아요.',
@@ -3975,7 +3980,7 @@ details.more.danger summary{color:var(--tx2)}
     const top = sc.scrollTop;
     const xs = [...document.querySelectorAll('[data-x]')].map(el => [el.dataset.x, el.scrollLeft, el]);
     const st = storageStats();
-    const view = ui.onboard ? renderOnboard() : ui.loadingChat && ui.view !== 'settings' ? `<section class="card"><div class="empty"><span class="spin" aria-hidden="true"></span><b>채팅 불러오는 중…</b>긴 채팅은 조금 걸려요. 다 읽으면 바로 보여 드릴게요.</div></section>` : ({ now: renderNow, people: renderPeople, promises: renderPromises, memory: renderMemory, cards: renderCards, news: renderNews, settings: renderSettings }[ui.view] ?? renderNow)(st);
+    const view = ui.onboard ? renderOnboard() : ui.loadingChat && ui.view !== 'settings' ? `<section class="card"><div class="empty"><span class="spin" aria-hidden="true"></span><b>채팅 불러오는 중…</b>긴 채팅은 조금 걸려요. 다 읽으면 바로 보여 드릴게요.</div></section>` : ({ now: renderNow, people: renderPeople, promises: renderPromises, memory: renderMemory, cards: renderCards, qcards: renderQCards, news: renderNews, settings: renderSettings }[ui.view] ?? renderNow)(st);
     const nThreads = openCount(false) + openCount(true);
     const badge = { promises: nThreads > 0, now: !!statusAlerts(st).length, people: settings.story && fixItems().length > 0 };
     const label = escapeHtml([chatLabel.char, chatLabel.chat].filter(Boolean).join(' · '));
@@ -3986,9 +3991,9 @@ details.more.danger summary{color:var(--tx2)}
     setHtml(document.getElementById('ja-top'), `<h1>${ui.onboard ? '시작하기' : TITLES[ui.view]}</h1><span class="sub">${label}</span>${ui.reading ? '<span class="pill reading"><i></i>채팅 읽는 중…</span><span class="loadbar reading" aria-hidden="true"><i></i></span>' : ''}${ui.saved ? `<span class="pill ok"><i></i>${escapeHtml(ui.saved)}</span>` : ''}<button class="iconbtn" data-act="close" aria-label="닫기">${icon('close')}</button>`);
     const tabbar = document.getElementById('ja-tabbar');
     tabbar.style.display = ui.onboard ? 'none' : '';
-    // 폰 아래 탭: 업데이트 내역은 탭으로 안 만든다 (설정에서 열고, 그동안 설정 탭이 켜져 있다). 탭이 하나 늘면 좁은 폰에서 두 줄로 넘친다
-    const tabOn = (id) => ui.view === id || (id === 'settings' && ui.view === 'news');
-    setHtml(tabbar, ui.onboard ? '' : VIEWS.filter(([id]) => id !== 'news').map(([id, lb, ic]) => `<button class="tab${tabOn(id) ? ' on' : ''}" data-act="go" data-view="${id}">${icon(ic, 22)}${lb}${badge[id] && !tabOn(id) ? '<i class="dot"></i>' : ''}</button>`).join(''));
+    // 폰 아래 탭: 업데이트 내역 · 질문 카드는 탭으로 안 만든다 (설정 · 연출 카드 화면에서 열고, 그동안 그 탭이 켜져 있다)
+    const tabOn = (id) => ui.view === id || TAB_OF[ui.view] === id;
+    setHtml(tabbar, ui.onboard ? '' : VIEWS.filter(([id]) => !TAB_OF[id]).map(([id, lb, ic]) => `<button class="tab${tabOn(id) ? ' on' : ''}" data-act="go" data-view="${id}">${icon(ic, 22)}${lb}${badge[id] && !tabOn(id) ? '<i class="dot"></i>' : ''}</button>`).join(''));
     sc.dataset.view = where;
     setHtml(document.getElementById('ja-wrap'), view);
     sc.scrollTop = keep ? top : 0;
@@ -4527,7 +4532,7 @@ details.more.danger summary{color:var(--tx2)}
         <div class="help" style="margin:6px 0">카드 묶음(JSON)을 붙여 넣고 가져오기를 누르면 이 묶음에 더해져요. 친구와 나눌 땐 아래 글을 복사하세요.</div>
         <textarea class="inp" id="dc-json" rows="5" spellcheck="false">${escapeHtml(JSON.stringify(packCards(sel, cfg).map(({ name, when, text, aff, promise }) => ({ name, when, text, ...(aff != null ? { aff } : {}), ...(promise ? { promise } : {}) })), null, 1))}</textarea>
         <div class="row" style="margin-top:8px"><button class="btn" data-act="dir-import">가져오기</button><button class="btn g" data-act="dir-copy">복사</button></div></details>`;
-    return `${head}
+    return `${cardSwitch('cards')}${head}
       <div class="mx${c.pack ? ' in' : ''}" style="margin-top:14px">
         <aside class="mfold">${fold}${newPack}</aside>
         <section class="mcont">
@@ -4535,11 +4540,13 @@ details.more.danger summary{color:var(--tx2)}
           <div class="search" style="margin-bottom:10px">${icon('search', 18)}<input id="cq" placeholder="카드 찾기" value="${escapeHtml(c.q)}" autocomplete="off"></div>
           ${cards}${io}
         </section>
-      </div>
-      ${qcardSection()}`;
+      </div>`;
   }
+  /** 폰: 아래 탭엔 연출 카드만 있으니 화면 맨 위에서 연출 카드 ↔ 질문 카드 (PC는 왼쪽 메뉴에 둘 다 있어서 숨김) */
+  const cardSwitch = (cur) => `<div class="seg cswitch">${[['cards', '🎬 연출 카드'], ['qcards', '❓ 질문 카드']].map(([v, t]) => `<button class="${cur === v ? 'on' : ''}" data-act="go" data-view="${v}">${t}</button>`).join('')}</div>`;
+  function renderQCards() { return `${cardSwitch('qcards')}${qcardSection()}`; }
 
-  /** 질문 카드 (연출 카드 아래): 평소 턴에 "다음 답장에 필요할 기억"을 Jev가 고르는 질문. 켜기 · 세기 · 묶음 · 카드 켜기 · 내 카드 */
+  /** 질문 카드 (메뉴의 연출 카드 밑 칸): 평소 턴에 "다음 답장에 필요할 기억"을 Jev가 고르는 질문. 켜기 · 세기 · 묶음 · 카드 켜기 · 내 카드 */
   function qcardSection() {
     const cfg = settings, off = new Set(cfg.qOff);
     const packs = qcPackList();
@@ -4554,14 +4561,13 @@ details.more.danger summary{color:var(--tx2)}
     const packOn = cfg.qPacks.includes(sel);
     const cards = list.length ? `<div class="cgrid">${list.map(x => { const isOff = off.has(x.id); return `<div class="ccard${isOff ? ' off' : ''}"><div class="ch2"><b>${escapeHtml(x.name)}</b>${x.aff != null ? `<span class="tag">${x.aff >= 0 ? `가까움 ${x.aff}+` : `사이 나쁨 ${x.aff}↓`}</span>` : ''}<button class="tg-s btn sm ${isOff ? '' : 'g'}" data-act="qc-toggle" data-id="${escapeHtml(x.id)}">${isOff ? '꺼짐' : '켜짐'}</button></div>${x.when ? `<div class="when">언제 · ${ph(x.when)}</div>` : ''}<div class="txt">${ph(x.q)}</div>${linked.has(x.id) ? `<div class="xs dim">🔗 연출 · ${escapeHtml(linked.get(x.id).join(' · '))}</div>` : ''}${sel === 'custom' ? `<div class="acts"><span class="tag">내 카드</span><button class="btn sm g" data-act="qc-edit" data-id="${escapeHtml(x.id)}">고치기</button><button class="btn sm g" data-act="qc-del" data-id="${escapeHtml(x.id)}">지우기</button></div>` : ''}</div>`; }).join('')}</div>`
       : `<div class="empty small">${sel === 'custom' ? '아직 내 질문 카드가 없어요. [+ 질문 카드]로 하나 써 보세요.' : '카드가 없어요.'}</div>`;
-    return `<section class="card qcsec">
-        <div class="ch"><h2>질문 카드</h2></div>
-        <div class="help" style="margin:-4px 0 12px">평소 턴엔 무엇을 기억해 와야 할지 흐려요. Jev가 지금 장면에 맞는 질문을 골라 그 질문으로 기억을 찾고 심사해요. 메인 모델에는 안 보내요. 🔗 연출은 그 연출 카드를 고른 턴에 같이 써요.</div>
+    return `<div class="qcsec">
         ${head}
-        <div class="hscroll" style="margin-top:12px">${chips}</div>
+        <div class="help" style="margin:10px 2px 12px">평소 턴엔 무엇을 기억해 와야 할지 흐려요. Jev가 지금 장면에 맞는 질문을 골라 그 질문으로 기억을 찾고 심사해요. 메인 모델에는 안 보내요. 🔗 연출은 그 연출 카드를 고른 턴에 같이 써요.</div>
+        <div class="hscroll">${chips}</div>
         <div class="crumb"><b>${escapeHtml(cur?.icon ?? '')} ${escapeHtml(cur?.name ?? '')}</b><span>· ${list.length}장${packOn ? '' : ' · 꺼짐'}</span><span class="sp"></span><button data-act="qc-pack-toggle" data-v="${sel}">${packOn ? '묶음 끄기' : '묶음 켜기'}</button><button class="btn sm p" data-act="qc-new">+ 질문 카드</button></div>
         ${cards}
-      </section>`;
+      </div>`;
   }
   function qcardFormSheet() {
     const editing = ui.sheet.edit ? settings.qCustom.find(x => x.id === ui.sheet.edit) : null;
@@ -5702,7 +5708,7 @@ details.more.danger summary{color:var(--tx2)}
       beforeRequestHandler, afterRequestHandler, indexAll, analyzeAll, ensureChat, refreshChat, flushVectors, flushStory, flushCards, saveSettings,
       chunkText, overlapStart, chatEntries, toSigns, packSigns, unpackSigns, storageStats, recall, parseStatus, storyClock, clockLabel, peopleIn, mergePeople, hidePerson, togglePin, chunkByCk, searchMemory, searchFacts,
       renderNow, renderPeople, renderPromises, renderMemory, tagCandidates, tagNouns, addTag, topTags, backupToLore, readLoreBackup, applyBackup, currentChatObj, backupData, renderSettings, renderOnboard, graphSvg, personSheet, chunkSheet, presetOf,
-      getSettings: () => settings, getStory: () => story, allDirCards, dirEligible, dirSheet, directorBox, DIR_PACKS, QCARD_PACKS, DIR_ASK, allQCards, qcQuestions, qcFrom, renderCards, presentCast, syncNameLineModule, NL_MODULE, NL_HIDE, NL_SCENE, getTimeline: () => timeline, getChunks: () => chunks, getCards: () => cardStore, getFacts: () => facts, graphData, busyIcon, getBusy: () => ({ ...busyN, shown: busyShown }), getMemStore: () => memStore, tagMessages, memBacklog, factBacklog, searchFacts, flushMem, clearMem, factItem, getLastRecall: () => lastRecall, getLastRescue: () => lastRescue, previewRecall, previewTail, withSpeaker, speakerOf, liveThreads, supersedeAll, supersedeFor, supBacklog, loreHits, loreInputHandler, loreDisplayHandler, stripLoreMark, splitAlias, itemRecords, cardOf, personCards, readReqExtra, linesOf, callJev, fitChoices, shrinkState, memParts, anchorDates, memLine, pickCast, memThreads, variantOf, addPerson, meetingsOf, meetFold, debugLog: () => debugLog, ui,
+      getSettings: () => settings, getStory: () => story, allDirCards, dirEligible, dirSheet, directorBox, DIR_PACKS, QCARD_PACKS, DIR_ASK, allQCards, qcQuestions, qcFrom, renderCards, renderQCards, presentCast, syncNameLineModule, NL_MODULE, NL_HIDE, NL_SCENE, getTimeline: () => timeline, getChunks: () => chunks, getCards: () => cardStore, getFacts: () => facts, graphData, busyIcon, getBusy: () => ({ ...busyN, shown: busyShown }), getMemStore: () => memStore, tagMessages, memBacklog, factBacklog, searchFacts, flushMem, clearMem, factItem, getLastRecall: () => lastRecall, getLastRescue: () => lastRescue, previewRecall, previewTail, withSpeaker, speakerOf, liveThreads, supersedeAll, supersedeFor, supBacklog, loreHits, loreInputHandler, loreDisplayHandler, stripLoreMark, splitAlias, itemRecords, cardOf, personCards, readReqExtra, linesOf, callJev, fitChoices, shrinkState, memParts, anchorDates, memLine, pickCast, memThreads, variantOf, addPerson, meetingsOf, meetFold, debugLog: () => debugLog, ui,
       waitJob: async () => { await (job ?? Promise.resolve()); await (storyJob ?? Promise.resolve()); },
     };
   }
