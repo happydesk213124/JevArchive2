@@ -1,7 +1,7 @@
 //@name jevarchive
-//@display-name 🏛️JevArchive 2.0.1
+//@display-name 🏛️JevArchive 2.0.2
 //@api 3.0
-//@version 2.0.1
+//@version 2.0.2
 //@update-url https://raw.githubusercontent.com/happydesk213124/JevArchive2/main/jevarchive.js
 //@arg jev_api_key string (선택) Jev API 키. JevArchive 화면의 설정에서 넣어도 됩니다.
 
@@ -89,6 +89,8 @@
     budget: 1500, candidates: 16, neighbor: 1, tailTokens: 120, indexPerSend: 100, memV: 2, castMax: 4,
     story: true, cards: false, director: false, intim: false, jevPrice: 0.042, jevParallel: 2, jevMaxTok: 16384, jevMaxOpts: 255, sceneChars: 6000, tags: true, skipStatus: true, busySpin: true, latest: true, loreTrig: true,
     dirCards: true, dirAuto: true, dirFreq: 'normal', dirPacks: ['basic', 'romance', 'daily', 'mystery', 'fantasy', 'horror', 'custom'], dirOff: [], dirCustom: [], dirUserPacks: [],
+    qCards: true, qFreq: 'normal', qPacks: ['basic', 'romance', 'daily', 'mystery', 'fantasy', 'horror', 'custom'], qOff: [], qCustom: [],
+    nlModule: false, nlHide: false, nlScene: false,
     injectMode: 'last_user', note: DEFAULT_NOTE, showButton: true,
   };
 
@@ -223,6 +225,14 @@
       dirOff: Array.isArray(s.dirOff) ? [...new Set(s.dirOff.filter(x => typeof x === 'string'))].slice(0, 3000) : [],
       dirCustom: sanitizeDirCards(s.dirCustom),
       dirUserPacks: sanitizeUserPacks(s.dirUserPacks),
+      qCards: s.qCards !== false,
+      qFreq: QC_FREQ[s.qFreq] ? s.qFreq : 'normal',
+      qPacks: Array.isArray(s.qPacks) ? [...new Set(s.qPacks.filter(x => typeof x === 'string'))].slice(0, 40) : [...DEFAULT_SETTINGS.qPacks],
+      qOff: Array.isArray(s.qOff) ? [...new Set(s.qOff.filter(x => typeof x === 'string'))].slice(0, 3000) : [],
+      qCustom: sanitizeQCards(s.qCustom),
+      nlModule: s.nlModule === true,
+      nlHide: s.nlHide === true,
+      nlScene: s.nlScene === true,
       injectMode: s.injectMode === 'system' ? 'system' : 'last_user',
       note: typeof s.note === 'string' ? s.note.trim() : DEFAULT_NOTE,
       showButton: s.showButton !== false,
@@ -895,7 +905,8 @@ let lastRescue = null;
   function presentCast(windowEntries) {
     if (!settings.story) return [];
     const text = windowEntries.map(m => m.text).join('\n');
-    return [...new Set([characterCache.name, personaCache, ...peopleIn(text)].filter(n => n && story.people[n] && !story.people[n].hidden))];
+    // 대화에 한 번도 안 나온 인물(0번 등장: 해설자 봇의 카드 이름, 대화에 안 쓰는 내 이름)은 장면 인물이 아니다
+    return [...new Set([characterCache.name, personaCache, ...peopleIn(text)].filter(n => n && story.people[n] && !story.people[n].hidden && (story.people[n].count ?? 0) > 0))];
   }
 
   // ══ 요청에서 새로 들어온 글 · 인물 명함 · 물건 이력 (1.0.20) ══
@@ -2190,10 +2201,10 @@ let lastRescue = null;
     const other = npcs.find(n => n !== ch && story.people[n].kind === 'npc');
     if (/\{other\}/.test(card.text + card.when) && !other) return null;
     const names = { char: ch, user: us, other: other ?? '' };
-    // 조사도 이름에 맞게: 하윤 + {가} → 하윤이, 지호 + {가} → 지호가
-    const PAIRS = { 이: ['이', '가'], 가: ['이', '가'], 은: ['은', '는'], 는: ['은', '는'], 을: ['을', '를'], 를: ['을', '를'], 과: ['과', '와'], 와: ['과', '와'] };
+    // 조사도 이름에 맞게: 하윤 + {가} → 하윤이, 지호 + {가} → 지호가, 하윤 + {나} → 하윤이나
+    const PAIRS = { 이: ['이', '가'], 가: ['이', '가'], 은: ['은', '는'], 는: ['은', '는'], 을: ['을', '를'], 를: ['을', '를'], 과: ['과', '와'], 와: ['과', '와'], 이나: ['이나', '나'], 나: ['이나', '나'] };
     const batchim = (w) => { const c = String(w).slice(-1).charCodeAt(0); return c >= 0xac00 && c <= 0xd7a3 ? (c - 0xac00) % 28 !== 0 : false; };
-    const f = (t) => String(t).replace(/\{(char|user|other)\}(이|가|은|는|을|를|과|와)?/g, (_, k, j) => { const n = names[k]; return j ? n + PAIRS[j][batchim(n) ? 0 : 1] : n; });
+    const f = (t) => String(t).replace(/\{(char|user|other)\}(이나|이|가|은|는|을|를|과|와|나)?/g, (_, k, j) => { const n = names[k]; return j ? n + PAIRS[j][batchim(n) ? 0 : 1] : n; });
     return { ...card, fText: f(card.text), fWhen: f(card.when || card.name) };
   }
   // ── 장르 자동 맞춤: 감독 호출에 질문 5개를 얹어 가끔 묻고, 맞는 장르 묶음만 쓴다 (기본 · 내 카드는 늘) ──
@@ -2433,6 +2444,114 @@ let lastRescue = null;
       ['h19', '낯선 표정', '{char}가 지쳐 있거나 이상한 일을 겪은 뒤', '{char}가 순간 평소와 다른 표정이나 말을 하고, 본인은 기억하지 못한다.'],
       ['h20', '위험한 출구', '위협이 바짝 다가왔을 때', '도망칠 길이 하나 보이지만 위험을 감수해야 한다.'],
     ] },
+  };
+
+  // ── 기본 질문 카드 묶음: [id, 이름, 언제, 질문, 조건] ──
+  // 평소 롤플 턴엔 "무엇을 기억해 와야 하나"가 흐리다. Jev가 장면(언제)을 보고 질문을 고르고, 그 질문으로 기억을 찾고 심사한다. 메인 모델에는 안 보낸다
+  // {char} {user} {other}는 이름, {place}는 상태창의 지금 장소. 약속 · 비밀 · 만남 · 좋아함은 관계 줄이 이미 넣으니 그 밖의 것을 묻는다
+  // 조건: aff = 캐릭터↔사용자 관계 온도가 이 이상(음수면 이 이하)
+  const QCARD_PACKS = {
+    basic: { label: '기본', icon: '❓', desc: '어떤 이야기에도 맞는 질문', cards: [
+      ['q01', '장소의 기억', '예전에 왔던 곳에 다시 왔을 때', '{place}에서 전에 무슨 일이 있었지?'],
+      ['q02', '물건의 내력', '물건이 장면에 나오거나 손에 들렸을 때', '지금 나온 물건은 전에 누가 어디서 줬거나 썼지?'],
+      ['q03', '하다 만 이야기', '{char}와 {user}가 다시 마주 앉아 대화를 시작할 때', '{char}와 {user}가 지난번에 하다 만 이야기는?'],
+      ['q04', '몸 상태', '다친 뒤거나 몸을 써야 하는 장면', '{char}나 {user}가 다쳤거나 아픈 곳이 있었나?'],
+      ['q05', '정해 둔 일정', '날짜 · 요일 · 시간 얘기가 나올 때', '오늘이나 곧 하기로 정해 둔 일은?'],
+      ['q06', '마음의 빚', '고마움이나 미안함이 오갈 법한 순간', '{char}가 {user}에게 고맙거나 미안한 일이 있었나?'],
+      ['q07', '지난 일 · 가족', '{char}의 과거나 가족 얘기가 나올 법할 때', '{char}의 가족이나 예전 일로 나온 이야기는?'],
+      ['q08', '다툼의 이유', '{char}와 {user} 사이가 어색하거나 화가 나 있을 때', '{char}와 {user}는 왜 틀어졌지?', { aff: -1 }],
+      ['q09', '할 줄 아는 것', '뭔가를 해내야 하거나 솜씨가 필요할 때', '{char}가 할 줄 아는 것과 못하는 것은?'],
+      ['q10', '호칭 · 말투', '오랜만에 둘이 말을 주고받을 때', '{char}는 {user}를 뭐라고 부르고, 어떤 말투였지?'],
+      ['q11', '마지막 장면', '시간이 꽤 지난 뒤 다시 만났을 때', '{char}와 {user}가 마지막으로 함께 있었을 때 무슨 일이 있었지?'],
+      ['q12', '비슷했던 순간', '지금 상황이 예전의 어떤 일과 닮았을 때', '예전에 지금과 비슷한 일이 있었나?'],
+      ['q13', '앞서 나온 떡밥', '예전에 나왔던 물건 · 말 · 장소를 다시 꺼낼 만할 때', '앞에서 나왔다가 아직 다시 안 나온 물건 · 말 · 장소는?'],
+      ['q14', '그 사람 소식', '{other} 얘기가 나오거나 {other}가 다시 나타났을 때', '{other}는 그동안 무엇을 하고 어디에 있었지?'],
+      ['q15', '돈 · 가진 것', '무언가를 사거나 주고받거나 잃어버릴 때', '{char}나 {user}가 가진 돈 · 물건 · 빚은?'],
+      ['q16', '사는 곳 · 일하는 곳', '집 · 직장 · 학교 같은 생활 장소 얘기가 나올 때', '{char}가 사는 곳이나 일하는 곳은 어디였지?'],
+      ['q17', '겉모습 · 옷차림', '생김새나 옷을 묘사할 만한 장면', '{char}의 생김새나 즐겨 입는 옷은?'],
+      ['q18', '무서워하는 것', '위험하거나 겁날 만한 상황', '{char}가 무서워하거나 피하는 것은?'],
+      ['q19', '바라는 것', '{char}가 무언가를 결심하거나 고민할 때', '{char}가 이루고 싶어 하는 것이나 바라는 것은?'],
+      ['q20', '이미 아는 것', '누가 무엇을 아는지가 중요할 때', '{char}나 {user}가 이미 듣거나 알게 된 정보는?'],
+    ] },
+    romance: { label: '로맨스', icon: '💗', desc: '설렘 · 데이트 · 서운함', cards: [
+      ['qr01', '첫 설렘', '마음이 드러나는 순간', '{char}가 {user}에게 처음 마음이 흔들렸던 때는?', { aff: 2 }],
+      ['qr02', '함께한 데이트', '둘이 놀러 가거나 시간을 보낼 때', '{char}와 {user}가 전에 같이 간 곳이나 한 일은?'],
+      ['qr03', '기념일', '특별한 날이나 날짜 얘기가 나올 때', '둘에게 중요한 날(기념일 · 생일)은 언제였지?'],
+      ['qr04', '질투', '{other}가 {user} 곁에 있을 때', '{char}가 {other} 때문에 신경 쓰이거나 질투한 적이 있었나?'],
+      ['qr05', '어디까지', '둘이 가까워지는 순간', '{char}와 {user}는 어디까지 가까워졌었지 (손잡기 · 포옹 · 입맞춤)?', { aff: 2 }],
+      ['qr06', '선물', '선물이나 기념품 얘기가 나올 때', '{char}와 {user}가 주고받은 선물은?'],
+      ['qr07', '서운했던 일', '분위기가 식거나 토라질 법할 때', '{char}가 {user}에게 서운했던 일은?'],
+      ['qr08', '고백과 대답', '마음을 고백하거나 대답을 기다릴 때', '전에 고백이나 대답이 오간 적이 있었나?'],
+    ] },
+    daily: { label: '일상', icon: '☕', desc: '하루 · 취향 · 주변 사람', cards: [
+      ['qd01', '하루 일과', '아침 · 점심 · 저녁처럼 하루의 흐름이 보일 때', '{char}의 평소 하루 일과는?'],
+      ['qd02', '음식 취향', '밥을 먹거나 요리할 때', '{char}가 좋아하거나 못 먹는 음식은?'],
+      ['qd03', '해야 할 일', '학교나 직장 일이 걸려 있을 때', '{char}나 {user}가 해야 할 숙제 · 일 · 마감은?'],
+      ['qd04', '친구 · 이웃', '친구나 이웃이 지나갈 법할 때', '{char}의 친구나 주변 사람은 누구였지?'],
+      ['qd05', '집안 사정', '집에 있거나 가족 얘기가 나올 때', '{char}의 집이나 가족 사정은?'],
+      ['qd06', '취미', '쉬는 시간이나 주말', '{char}의 취미나 요즘 빠진 것은?'],
+      ['qd07', '키우는 동물', '동물 얘기가 나오거나 동물이 보일 때', '{char}나 {user}가 키우는 동물은?'],
+      ['qd08', '이런 날씨', '날씨나 계절 얘기가 나올 때', '전에 이런 날씨나 계절에 있었던 일은?'],
+    ] },
+    mystery: { label: '미스터리 · 스릴러', icon: '🔍', desc: '단서 · 알리바이 · 증언', cards: [
+      ['qm01', '모은 단서', '조사하거나 무언가를 살펴볼 때', '지금까지 찾은 단서는?'],
+      ['qm02', '알리바이', '누가 어디 있었는지가 중요할 때', '그때 각자 어디에 있었다고 했지?'],
+      ['qm03', '말의 앞뒤', '누군가의 말이 앞뒤가 안 맞을 때', '앞에서 한 말과 지금 말이 다른 사람이 있나?'],
+      ['qm04', '사건 순서', '무슨 일이 언제 일어났는지 따질 때', '사건이 어떤 순서로 일어났지?'],
+      ['qm05', '수상한 점', '{other}가 의심받을 때', '{other}에 대해 수상했던 점은?'],
+      ['qm06', '동기', '왜 그랬는지를 따질 때', '누가 무엇 때문에 그런 일을 했을 수 있지?'],
+      ['qm07', '증언', '목격자나 증언 얘기가 나올 때', '누가 무엇을 봤거나 들었다고 했지?'],
+      ['qm08', '없어진 것', '무언가가 없어지거나 바뀌었을 때', '언제부터 무엇이 없어지거나 바뀌었지?'],
+    ] },
+    fantasy: { label: '판타지 · 모험', icon: '🗡️', desc: '규칙 · 능력 · 일행', cards: [
+      ['qf01', '세계의 규칙', '마법 · 풍습 · 금기 같은 설정이 걸릴 때', '이 세계나 이곳의 규칙 · 풍습 · 금기로 나온 것은?'],
+      ['qf02', '능력과 대가', '기술이나 마법을 쓰려 할 때', '{char}가 쓸 수 있는 능력 · 마법과 그 대가는?'],
+      ['qf03', '일행', '함께 다니는 사람들이 중요할 때', '지금 일행은 누구고 각자 무엇을 잘하지?'],
+      ['qf04', '지나온 길', '어디로 갈지 정할 때', '지금까지 지나온 곳과 가려는 곳은?'],
+      ['qf05', '장비 · 아이템', '무기 · 도구 · 물약을 쓸 때', '가진 장비나 아이템은?'],
+      ['qf06', '적 · 괴물', '적이나 괴물과 마주쳤을 때', '이 적이나 괴물에 대해 알려진 것은?'],
+      ['qf07', '맡은 일', '맡은 일이나 목표를 다시 볼 때', '지금 맡은 임무와 그 이유는?'],
+      ['qf08', '신분 · 세력', '귀족 · 길드 · 왕국 같은 세력이 얽힐 때', '{char}의 신분이나 속한 세력은?'],
+    ] },
+    horror: { label: '공포', icon: '🕯️', desc: '이상한 일 · 금기 · 흔적', cards: [
+      ['qh01', '이상한 일', '설명할 수 없는 일이 일어날 때', '전에 있었던 이상한 일은?'],
+      ['qh02', '경고', '하면 안 되는 일이 있을 때', '하지 말라고 한 것이나 받은 경고는?'],
+      ['qh03', '사라진 사람', '누군가가 없어졌거나 연락이 끊겼을 때', '그 사람을 마지막으로 본 건 언제 어디였지?'],
+      ['qh04', '안전한 곳', '숨거나 도망칠 곳이 필요할 때', '안전했던 장소나 숨을 곳은?'],
+      ['qh05', '소리 · 흔적', '소리나 흔적을 발견했을 때', '전에 들었던 소리나 본 흔적은?'],
+      ['qh06', '남은 물건', '손전등 · 열쇠 · 약처럼 남은 것이 중요할 때', '지금 가진 물건과 남은 양은?'],
+      ['qh07', '전설 · 소문', '이곳의 옛이야기가 떠오를 때', '이곳에 얽힌 전설이나 소문은?'],
+      ['qh08', '다치거나 변한 사람', '누가 다쳤거나 이상해졌을 때', '누가 다치거나 이상하게 변했었지?'],
+    ] },
+  };
+  // ── 🏛️ JEV 이름:대사 모듈: 설정에서 켜면 Risu 모듈로 만들어 켠다 (OmniNexus처럼 DB의 modules · enabledModules) ──
+  //  대사를 "이름: 대사" 줄로 쓰게 해서 누가 한 말인지 잘 기억한다. "이름:" 숨기기는 채팅 화면에서만, 장소 · 날짜는 답장 맨 위 상태줄 한 줄
+  const NL_MODULE = { id: 'jevarchive-name-line', name: '🏛️ JEV 이름:대사', description: '대사를 "이름: 대사" 줄로 쓰게 해서 JevArchive가 누가 한 말인지 잘 기억해요. JevArchive 플러그인 설정에서 켜고 꺼요.' };
+  const NL_LORE = `@@depth 0
+<JevNameLine>
+Write every spoken line on its own line as Name: "Dialogue", using the speaker's established name, e.g. 하윤: "안녕." Inner thoughts: Name: 'Thought'.
+In a first-person story the viewpoint character's own lines still take their real name, never I/나/저. Never invent a name; if the speaker is unknown, write the line without a name.
+Narration stays plain prose. Keep the story's language.
+</JevNameLine>`;
+  // 상태줄 모양은 parseStatus가 읽는 그대로 (요일 칸은 건너뛰고, 날씨 낱말은 날씨로, 남은 칸이 장소)
+  const NL_SCENE = `@@depth 0
+<JevScene>
+Begin every reply with one status line, then the story:
+[YYYY-MM-DD (요일) ◆ HH:MM ◆ place ◆ weather]
+e.g. [2024-05-03 (금) ◆ 18:20 ◆ 해변 카페 ◆ 맑음]
+Keep the in-story calendar consistent: move the date and time forward only as the story moves, and keep the same place name while the scene stays there.
+</JevScene>`;
+  // 채팅 화면에서만 "이름:"을 숨긴다: 줄 맨 앞 이름 + 쌍점 + 바로 따옴표일 때만 (Location: 같은 상태줄은 그대로). 모델 · 기억에는 그대로
+  const NL_HIDE = { comment: 'jev-hide-name', type: 'editdisplay', ableFlag: true, flag: 'g<order -10250>', in: '(^|\\n)([ \\t>*_]*)[^\\n:："“\'‘「『*]{1,24}?[ \\t]*[:：][ \\t]*(?=["“\'‘「『])', out: '$1$2' };
+
+  // ── 연출 카드 → 질문 카드: 기억이 있어야 살릴 수 있는 연출은, 감독이 그 카드를 고른 턴에 이 질문으로 기억도 같이 찾는다 ──
+  const DIR_ASK = {
+    b04: ['q13', 'q02'], b09: ['q09'], b12: ['q12', 'q01'], b17: ['q02'], b18: ['q05'], b19: ['q14'], b20: ['q04'], b24: ['q10'], b25: ['q19'], b28: ['q07'],
+    r02: ['qr04'], r03: ['q10'], r07: ['qr06'], r12: ['qr02'], r13: ['qr07', 'q08'], r14: ['qr07'], r21: ['qr01'],
+    d01: ['qd02'], d04: ['qd04'], d05: ['qd01'], d07: ['q05'], d08: ['qd07'], d09: ['qd06'], d12: ['q07', 'qd05'],
+    m01: ['qm01'], m02: ['qm03'], m05: ['qm05'], m07: ['qm07'], m09: ['qm01', 'qm04'], m10: ['qm08'], m12: ['q12'], m18: ['qm02'],
+    f03: ['qf02'], f04: ['qf01'], f05: ['qf01'], f07: ['q07', 'qf03'], f08: ['qf06'], f09: ['qf03'], f11: ['qf07'], f16: ['qf05', 'q15'], f19: ['q04'], f20: ['qf04'],
+    h02: ['q01'], h05: ['qh03'], h06: ['qh02'], h09: ['qh01'], h11: ['qh07'], h12: ['qh04'], h18: ['qh06'],
   };
 
   // ══════════════════════════════════════════════════════════════════════
@@ -2802,20 +2921,97 @@ let lastRescue = null;
   }
   const RANK = ['unrelated', 'background', 'useful', 'answers it'];
   const memScore = (r) => { const p = r?.probabilities; if (p && Object.keys(p).length) { let s = 0, t = 0; for (const [k, v] of Object.entries(p)) { const lv = Number(k); if (Number.isFinite(lv)) { s += lv * v; t += v; } } if (t) return s / t; } return Number(r?.score ?? 0); };
-  /** 이번 턴 인물: 장면에 나온 사람 → 최근에 나온 사람 순으로 후보, Jev가 "다음 답장에 나오거나 얘기될까?"를 본다 (감독 질문도 같은 호출에) */
-  async function pickCast(latest, ctx, present, dir) {
+  /** 대화에 한 번이라도 나온 인물만 이번 턴 인물 후보 (0번 등장 = 캐릭터 카드 이름 · 내 이름이 한 번도 안 나온 경우) */
+  const castable = (n) => (story.people[n]?.count ?? 0) > 0;
+  /** 이번 턴 인물: 장면에 나온 사람 → 최근에 나온 사람 순으로 후보, Jev가 "다음 답장에 나오거나 얘기될까?"를 본다 (감독 · 질문 카드도 같은 호출에) */
+  async function pickCast(latest, ctx, present, dir, qc) {
     const max = clampNum(settings.castMax, 4, 1, 8);
-    const cands = [...present];
-    for (const p of personList().filter(x => !x.hidden).sort((a, b) => (b.last ?? -1) - (a.last ?? -1))) { if (cands.length >= 16) break; if (!cands.includes(p.name)) cands.push(p.name); }
-    const q = { ...(dir?.q ?? {}) };
+    const cands = present.filter(castable);
+    for (const p of personList().filter(x => !x.hidden && castable(x.name)).sort((a, b) => (b.last ?? -1) - (a.last ?? -1))) { if (cands.length >= 16) break; if (!cands.includes(p.name)) cands.push(p.name); }
+    const q = { ...(dir?.q ?? {}), ...(qc?.q ?? {}) };
     cands.forEach((n, i) => { q[`cast${i}`] = { type: 'noul', instructions: `Will «${n}» appear, act, speak, or be talked about in the next reply?` }; });
     if (!Object.keys(q).length) return { cast: [], answers: {}, ok: true };
     const state = `[RECENT STORY]\n${clip(ctx, 1500)}\n\n[USER]\n${clip(latest, 1500)}`;
     const answers = await callJev(state, q);
     const picked = cands.map((n, i) => [n, Number(answers[`cast${i}`]?.noul ?? 0)]).filter(([, p]) => p >= 0.5).sort((a, b) => b[1] - a[1]).map(([n]) => n);
-    // 내 캐릭터(페르소나)는 장면에 있으면 늘 넣는다
-    const mine = present.filter(n => story.people[n]?.kind === 'persona');
+    // 내 캐릭터(페르소나)는 장면에 있으면 늘 넣는다 (대화에 한 번도 안 나왔으면 빼고)
+    const mine = present.filter(n => story.people[n]?.kind === 'persona' && castable(n));
     return { cast: [...new Set([...mine, ...picked])].slice(0, max), answers, ok: true };
+  }
+
+  // ══ 질문 카드 ══
+  //  평소 롤플 턴엔 "무엇을 기억해 와야 하나"가 흐리다 (질문형 메시지만 심사 기준이 분명하다).
+  //  사람이 써 둔 질문 중 지금 장면에 맞는 것을 Jev가 고른다: 이번 턴 인물과 같은 호출에 얹어서 호출이 안 는다.
+  //  고른 질문은 ① 기억 찾기 검색어 ② Jev 심사 기준(이 질문의 답이면 3점). 메인 모델에는 안 보낸다.
+  //  감독이 고른 연출 카드에 이어진 질문(DIR_ASK)은 그 턴에 같이 쓴다.
+  const QC_ASK = 40;   // Jev에게 물어볼 카드 수 (켜진 카드가 더 많으면 지금 장면과 글자가 겹치는 순)
+  const QC_FREQ = { rare: { max: 2, p: 0.75 }, normal: { max: 4, p: 0.6 }, often: { max: 6, p: 0.45 } };   // 한 턴에 쓰는 질문 수 · Jev 확률 문턱
+  const QC_FREQ_KO = { rare: '가끔', normal: '보통', often: '자주' };
+  const qcCardOf = (pack, [id, name, when, q, opt]) => ({ id, pack, name, when, q, aff: opt?.aff ?? null });
+  function sanitizeQCards(list) {
+    if (!Array.isArray(list)) return [];
+    const s = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+    const seen = new Set();
+    const out = [];
+    for (const c of list) {
+      if (!c || typeof c !== 'object') continue;
+      const name = s(c.name, 40), q = s(c.q, 200);
+      if (!name || !q) continue;
+      let id = s(c.id, 40) || `qu${fnv(`${name}|${q}`).toString(36)}`;
+      while (seen.has(id)) id += 'x';
+      seen.add(id);
+      const affN = c.aff === null || c.aff === '' || c.aff === undefined ? NaN : Number(c.aff);
+      out.push({ id, pack: 'custom', name, when: s(c.when, 160), q, aff: Number.isFinite(affN) ? Math.max(-10, Math.min(10, Math.round(affN))) : null });
+      if (out.length >= 500) break;
+    }
+    return out;
+  }
+  /** 질문 카드 묶음: 기본 · 장르 · 내 카드 */
+  const qcPackList = () => [...Object.entries(QCARD_PACKS).map(([id, p]) => ({ id, icon: p.icon, name: p.label, desc: p.desc })), { id: 'custom', icon: '✍️', name: '내 카드', desc: '내가 쓴 질문' }];
+  const qcPackCards = (pid, cfg = settings) => (pid === 'custom' ? cfg.qCustom : (QCARD_PACKS[pid]?.cards ?? []).map(c => qcCardOf(pid, c)));
+  /** 켜 둔 묶음의 질문 카드 (끈 카드 빼고). withOff면 전부 */
+  function allQCards(cfg = settings, withOff = false) {
+    const off = new Set(cfg.qOff);
+    const out = qcPackList().filter(p => withOff || cfg.qPacks.includes(p.id)).flatMap(p => qcPackCards(p.id, cfg));
+    return withOff ? out : out.filter(c => !off.has(c.id));
+  }
+  /** {char} {user} {other} {place}를 채운다. 못 채우면 null */
+  function qcFill(card, present, place) {
+    if (/\{place\}/.test(card.q + card.when) && !place) return null;
+    const f = dirFill({ ...card, text: card.q }, present);
+    if (!f) return null;
+    const pl = (t) => t.replace(/\{place\}/g, place);
+    return { ...card, fQ: pl(f.fText), fWhen: pl(f.fWhen) };
+  }
+  /** Jev에게 물을 질문 카드: 장르 · 관계 온도 · 채울 이름이 맞는 것만 */
+  function qcQuestions(present, ctx) {
+    const ch = characterCache.name, us = personaCache;
+    const aff = ch && us ? (pairOf(ch, us)?.aff ?? 0) : 0;
+    const gen = settings.dirAuto ? activeGenres() : null;
+    const place = storyClock(timeline.length).place ?? '';
+    let list = [];
+    for (const c of allQCards()) {
+      if (gen && GENRES[c.pack] && !gen.includes(c.pack)) continue;
+      if (c.aff != null && (c.aff >= 0 ? aff < c.aff : aff > c.aff)) continue;
+      const f = qcFill(c, present, place);
+      if (f) list.push(f);
+    }
+    if (list.length > QC_ASK) { const g = bigrams(ctx); list = list.map(c => { let hit = 0; for (const x of bigrams(`${c.fWhen} ${c.fQ}`)) if (g.has(x)) hit++; return [c, hit]; }).sort((a, b) => b[1] - a[1]).slice(0, QC_ASK).map(([c]) => c); }
+    const q = {};
+    list.forEach((c, i) => { q[`qc${i}`] = { type: 'noul', instructions: `Does the current scene fit «${c.fWhen}», so that the next reply would be better if it remembered the answer to: ${c.fQ}` }; });
+    return { q, list, place };
+  }
+  /** Jev가 고른 질문 (세기만큼) + 감독이 고른 연출 카드에 이어진 질문 (장르 · 관계 온도와 상관없이, 끈 카드 · 못 채우는 카드는 빼고) */
+  function qcFrom(answers, qc, hint, present) {
+    const f = QC_FREQ[settings.qFreq] ?? QC_FREQ.normal;
+    const out = qc.list.map((c, i) => [c, Number(answers?.[`qc${i}`]?.noul ?? 0)]).filter(([, p]) => p >= f.p).sort((a, b) => b[1] - a[1]).slice(0, f.max).map(([c]) => ({ id: c.id, name: c.name, text: c.fQ, via: 'jev' }));
+    for (const id of DIR_ASK[hint?.card?.id] ?? []) {
+      if (out.some(x => x.id === id)) continue;
+      const c = allQCards().find(x => x.id === id);
+      const fc = c && qcFill(c, present, qc.place);
+      if (fc) out.push({ id: fc.id, name: fc.name, text: fc.fQ, via: 'dir' });
+    }
+    return out;
   }
   const MEM_STOP = new Set(['그리고', '그래서', '근데', '정말', '진짜', '너무', '완전', '그냥', '우리', '오늘', '어제', '이번', '지난', '다음', '사진', '했어', '있어', '같아', '고마워', '좋아', '지금', '그때', '조금', '많이']);
   /** 더 찾을 낱말 후보: 후보 조각에 나온 드문 낱말 (질문에 이미 있는 건 빼고) */
@@ -2826,12 +3022,12 @@ let lastRescue = null;
     return [...cnt.keys()].map(w => [w, df(w)]).filter(([, n]) => n >= 1 && n <= Math.max(3, facts.length * 0.08)).sort((a, b) => a[1] - b[1]).slice(0, 25).map(x => x[0]);
   }
   const NEED_Q = 'Which keyword should be searched next to find an earlier record that is still missing for replying to the latest message? none if the records above already cover it.';
-  /** Jev 심사: 후보마다 0~3 (+ 첫 갈래에는 더 찾을 낱말) */
-  async function judgeMem(head, list, kws) {
+  /** Jev 심사: 후보마다 0~3 (+ 첫 갈래에는 더 찾을 낱말). nq = 머리에 붙은 질문 카드 수 (그 질문의 답이어도 3점) */
+  async function judgeMem(head, list, kws, nq = 0) {
     const q = {};
     list.forEach((f, i) => { q[`r${i}`] = { type: 'score', instructions: `C${i}`, criteria: RANK }; });
     if (kws?.length) q.need = { type: 'choice', instructions: NEED_Q, criteria: Object.fromEntries([...kws.map((w, k) => [`k${k}`, w]), ['none', 'nothing is missing']]) };
-    const state = `${head}\n\n[EARLIER RECORDS] For each Cn question, score how useful that record is for writing the next reply to the latest message: 0 unrelated, 1 background only, 2 useful context, 3 answers or explains it. old→#N marks a record that a later message updated.\n${list.map((f, i) => `C${i}: ${clip(memLine(f, new Set(), true), 420)}`).join('\n')}`;
+    const state = `${head}\n\n[EARLIER RECORDS] For each Cn question, score how useful that record is for writing the next reply to the latest message: 0 unrelated, 1 background only, 2 useful context, 3 answers or explains it${nq ? ' or answers one of the Q questions above' : ''}. old→#N marks a record that a later message updated.\n${list.map((f, i) => `C${i}: ${clip(memLine(f, new Set(), true), 420)}`).join('\n')}`;
     const a = await callJev(state, q);
     let need = null;
     if (a.need) { const pr = Object.entries(a.need.probabilities ?? {}).sort((x, y) => y[1] - x[1])[0]; const ch = a.need.choice ?? pr?.[0]; if (ch && ch !== 'none' && (!pr || pr[1] >= 0.4)) need = kws[+ch.slice(1)] ?? null; }
@@ -2955,13 +3151,14 @@ let lastRescue = null;
     const present = presentCast(windowEntries);
     for (const n of reqExtra?.names ?? []) if (!present.includes(n)) present.push(n);
     const dir = cfg.director && cfg.story && present.length ? directorQuestions(present, [], ctx) : null;
-    // ① 동시에: 질문 임베딩 · 이번 턴 인물(+감독)
+    const qc = cfg.qCards !== false && cfg.story && present.length ? qcQuestions(present, ctx) : null;
+    // ① 동시에: 질문 임베딩 · 이번 턴 인물(+감독 · 질문 카드)
     const queries = [latest.slice(0, 2000) || ctx, ...(prevStory.length > 40 ? [prevStory.slice(-800)] : []), ...(reqExtra?.text ? [reqExtra.text.slice(0, 1500)] : [])].filter(Boolean);
     let jevOk = true;
     const [qv, castR] = await Promise.all([
       pool.length ? timed(tr, '질문 임베딩', () => queryVecs(queries), () => `검색어 ${queries.length}개`).catch(error => { setError('임베딩', error); return []; }) : Promise.resolve([]),
       // 이야기 기록(인물 장부)을 끄면 인물 고르기 · 관계 줄도 안 한다 (기억 찾기는 그대로)
-      (cfg.story ? timed(tr, '이번 턴 인물', () => pickCast(latest, ctx, present, dir), () => '') : Promise.resolve({ cast: [], answers: {}, ok: true })).catch(error => { setError('이번 턴 인물', error); jevOk = false; return { cast: present.slice(0, clampNum(cfg.castMax, 4, 1, 8)), answers: {}, ok: false }; }),
+      (cfg.story ? timed(tr, '이번 턴 인물', () => pickCast(latest, ctx, present, dir, qc), () => '') : Promise.resolve({ cast: [], answers: {}, ok: true })).catch(error => { setError('이번 턴 인물', error); jevOk = false; return { cast: present.filter(castable).slice(0, clampNum(cfg.castMax, 4, 1, 8)), answers: {}, ok: false }; }),
     ]);
     const cast = castR.cast;
     const castSet = new Set(cast);
@@ -2975,7 +3172,10 @@ let lastRescue = null;
       story.director = hint;
       saveStory();
     }
-    // ② 후보: 임베딩 · 글자 · 인물 · 방금 흐름 → RRF
+    // 질문 카드: Jev가 고른 질문 + 연출 카드에 이어진 질문 → 검색어 · 심사 기준
+    const qs = qc && castR.ok ? qcFrom(castR.answers, qc, hint, present) : [];
+    const qcv = qs.length && pool.length ? await timed(tr, '질문 카드 임베딩', () => queryVecs(qs.map(x => x.text)), () => `질문 ${qs.length}개`).catch(error => { setError('임베딩', error); return []; }) : [];
+    // ② 후보: 임베딩 · 글자 · 인물 · 질문 카드 · 방금 흐름 → RRF
     const sem = new Map();
     if (qv.length) for (const f of pool) { if (!f.vec || f.ask) continue; let s = -Infinity; qv.forEach((q, i) => { const v = simSigns(q, f.vec) * (i === 0 ? 1 : 0.8); if (v > s) s = v; }); sem.set(f.id, s); }
     const rrf = new Map();
@@ -2996,11 +3196,13 @@ let lastRescue = null;
       }
       for (const l of per.values()) addList(l.sort((a, b) => b[1] - a[1]).slice(0, 15).map(x => x[0]));
     }
+    // 질문 카드: 질문마다 뜻이 가까운 조각
+    for (const v of qcv) if (v) addList(pool.filter(f => f.vec && !f.ask).map(f => [f.id, simSigns(v, f.vec)]).sort((a, b) => b[1] - a[1]).slice(0, 20).map(x => x[0]), 0.8);
     addList(pool.slice(-2).reverse().map(f => f.id), 0.5);
     addList([...tmp.keys()].reverse());
     const first = [...rrf].sort((a, b) => b[1] - a[1]).slice(0, 60).map(([id]) => get(id));
     // ③ Jev 심사: 20개씩 동시에, 첫 갈래에 더 찾을 낱말
-    const head = `[RECENT STORY]\n${clip(ctx, 1200)}\n\n[USER]\n${clip(latest, 1500)}`;
+    const head = `[RECENT STORY]\n${clip(ctx, 1200)}\n\n[USER]\n${clip(latest, 1500)}${qs.length ? `\n\n[THE NEXT REPLY MAY NEED]\n${qs.map((x, i) => `Q${i + 1}: ${x.text}`).join('\n')}` : ''}`;
     const scores = new Map();
     let need = null;
     if (first.length) {
@@ -3008,7 +3210,7 @@ let lastRescue = null;
       for (let i = 0; i < first.length; i += 20) groups.push(first.slice(i, i + 20));
       const kws = needWords(first.slice(0, 20), latest);
       try {
-        const rs = await timed(tr, 'Jev 심사', () => Promise.all(groups.map((g, gi) => judgeMem(head, g, gi === 0 ? kws : null))), () => `후보 ${first.length}개`);
+        const rs = await timed(tr, 'Jev 심사', () => Promise.all(groups.map((g, gi) => judgeMem(head, g, gi === 0 ? kws : null, qs.length))), () => `후보 ${first.length}개`);
         for (const r of rs) { for (const [id, s] of r.sc) scores.set(id, s); need ??= r.need; }
       } catch (error) {
         setError('Jev 심사', error);
@@ -3025,7 +3227,7 @@ let lastRescue = null;
           if (hv) add2(pool.filter(f => f.vec && !f.ask && !seen.has(f.id)).map(f => [f.id, simSigns(hv, f.vec)]).sort((a, b) => b[1] - a[1]).slice(0, 60).map(x => x[0]));
           add2([...lexScores(`${latest} ${need}`, chunkLimit)].sort((a, b) => b[1] - a[1]).map(([cid]) => ofChunk(cid)).filter(f => f && f.mi < limitMi && !f.ask && !seen.has(f.id)).slice(0, 60).map(f => f.id));
           const more = [...r2].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => get(id));
-          if (more.length) { const r = await timed(tr, '다시 찾기', () => judgeMem(`${head}\n(also look for: ${need})`, more, null), () => `«${need}» ${more.length}개`); for (const [id, s] of r.sc) scores.set(id, s); }
+          if (more.length) { const r = await timed(tr, '다시 찾기', () => judgeMem(`${head}\n(also look for: ${need})`, more, null, qs.length), () => `«${need}» ${more.length}개`); for (const [id, s] of r.sc) scores.set(id, s); }
         } catch (error) { setError('다시 찾기', error); }
       }
     }
@@ -3073,8 +3275,8 @@ let lastRescue = null;
     return {
       block, picked,
       trace: {
-        cands: first.length, kept: picked.length, need: need ?? 'none', jevOk, present: cast, cast, hint,
-        storyKo: [...(cast.length ? [{ t: `이번 인물 · ${cast.join(', ')}`, c: 'ac' }] : []), ...scene.ko],
+        cands: first.length, kept: picked.length, need: need ?? 'none', jevOk, present: cast, cast, hint, qcards: qs,
+        storyKo: [...(cast.length ? [{ t: `이번 인물 · ${cast.join(', ')}`, c: 'ac' }] : []), ...(qs.length ? [{ t: `질문 카드 · ${qs.map(x => `${x.via === 'dir' ? '🔗' : ''}${x.name}`).join(' · ')}`, c: '' }] : []), ...scene.ko],
         items: picked.map(f => ({ id: f.id, ck: `${f.key}:${f.pos}`, mi: f.mi, lv: Math.round((scores.get(f.id) ?? 0) * 100) / 100, why: why(f), text: f.sent, fact: f.k ? { k: f.k, slots: f.slots } : null })),
         levels: ranked.slice(0, 40).map(([id, lv]) => ({ id, lv: Math.round(lv * 100) / 100, text: clip(get(id)?.sent ?? '', 140), mi: (get(id)?.mi ?? 0) + 1 })),
       },
@@ -3246,7 +3448,7 @@ let lastRescue = null;
 
   const ui = {
     open: false, view: 'now', sheet: null, progress: '', test: {}, bound: false, draft: null, onboard: null, saved: '',
-    graph: { x: 0, y: 0, k: 1 }, layout: null, layoutSig: '', search: { q: '', results: null, busy: false, pins: false }, pv: { q: '', res: null, busy: false }, cards: { pack: null, q: '', edit: null, newPack: false, packEdit: false }, mem: { group: 'date', folder: null, kind: 'all', role: 'all', sort: 'new', limit: 30 },
+    graph: { x: 0, y: 0, k: 1 }, layout: null, layoutSig: '', search: { q: '', results: null, busy: false, pins: false }, pv: { q: '', res: null, busy: false }, cards: { pack: null, q: '', edit: null, newPack: false, packEdit: false }, qc: { pack: null }, mem: { group: 'date', folder: null, kind: 'all', role: 'all', sort: 'new', limit: 30 },
     threads: 'open', keepOpen: new Map(), saveTimer: null, peopleQ: '',
   };
 
@@ -3276,8 +3478,8 @@ a{color:var(--ac)}
 .iconbtn:hover{background:var(--s2);color:var(--tx)}
 .scroll{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:16px 16px calc(96px + var(--safe))}
 .wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:5;display:grid;grid-template-columns:repeat(7,1fr);padding:6px 6px calc(6px + var(--safe));background:rgba(13,16,22,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line)}
-.tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;border:0;background:none;color:var(--tx3);font-size:11px;border-radius:12px;min-height:52px;justify-content:center;position:relative}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:5;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);padding:6px 6px calc(6px + var(--safe));background:rgba(13,16,22,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line)}
+.tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;border:0;background:none;color:var(--tx3);font-size:11px;border-radius:12px;min-height:52px;justify-content:center;position:relative;min-width:0;white-space:nowrap;overflow:hidden}
 .tab.on{color:var(--tx)}
 .tab.on svg{color:var(--ac)}
 .tab .dot{position:absolute;top:6px;right:calc(50% - 16px);width:7px;height:7px;border-radius:50%;background:var(--gold)}
@@ -3566,6 +3768,10 @@ pre.raw{white-space:pre-wrap;word-break:break-word;margin:8px 0 0;padding:12px;b
 .ccard .when{font-size:12px;color:var(--tx3)}
 .ccard .txt{font-size:13px;color:var(--tx2);line-height:1.55}
 .ccard .acts{display:flex;gap:6px;margin-top:2px}
+.qcsec{margin-top:18px}
+.qcsec .chip{cursor:pointer}
+.qcsec .chip.on{background:var(--s3);color:var(--tx);border-color:var(--ac)}
+.qcsec .chip.offp{opacity:.5;text-decoration:line-through}
 .composer{padding:14px;border-radius:14px;border:1px dashed rgba(140,158,255,.45);background:rgba(140,158,255,.05);margin-bottom:12px;display:flex;flex-direction:column;gap:8px}
 .composer .phs{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .composer .phs .chip{cursor:pointer;font-family:inherit}
@@ -3685,6 +3891,13 @@ details.more.danger summary{color:var(--tx2)}
   const TITLES = { now: '지금', people: '인물과 관계', promises: '약속 · 비밀', memory: '기억', nodes: '기억 마디', cards: '연출 카드', news: '업데이트 내역', settings: '설정' };
   // 업데이트 내역 (새 버전이 위)
   const CHANGELOG = [
+    ['2.0.2', '2026-11-04', [
+      '질문 카드 (기본 켬): 평소 롤플 턴엔 무엇을 기억해 와야 할지 흐려요. 이번 턴 인물을 고르는 같은 Jev 요청에서, 사람이 써 둔 질문 60장(기본 20 · 로맨스 · 일상 · 미스터리 · 판타지 · 공포 8장씩) 중 지금 장면에 맞는 걸 골라 그 질문으로 기억을 찾고 "이 질문의 답이면 3점"으로 심사해요. 메인 모델에는 안 보내요. 연출 카드 화면 아래에서 켜기 · 세기(가끔 2 · 보통 4 · 자주 6개) · 묶음 · 카드 켜기 · 내 카드를 정해요.',
+      '연출 카드와 이어 주기: 기억이 있어야 살릴 수 있는 연출 49장에 질문을 짝지었어요 (떡밥 회수 → 앞서 나온 떡밥 · 물건의 내력). 감독이 그 연출을 고른 턴엔 그 질문으로 기억도 같이 찾아요.',
+      '🏛️ JEV 이름:대사 모듈 (기본 끔): 초기 설정 · 설정에서 켜면 대사를 "이름: 대사"로 쓰게 하는 Risu 모듈을 만들어 켜요. "이름:" 숨기기(채팅 화면에서만)와 장소 · 날짜 · 시간 로어북(답장 맨 위 상태줄 한 줄)도 따로 켜고 꺼요. 끄면 모듈만 꺼요.',
+      '대화에 한 번도 안 나온 인물(0번 등장: 해설자 봇의 카드 이름, 대화에 안 쓰는 내 이름)은 이번 턴 인물 고르기에서 빼요.',
+      '폰에서 설정 › 업데이트 내역을 열면 아래 탭이 두 줄이 되던 것 고침: 업데이트는 탭으로 안 만들고(설정 탭이 켜진 채로), 탭 칸을 탭 수만큼만 나눠요.',
+    ]],
     ['2.0.1', '2026-11-04', ['기억 탭에서 긴 답장의 문단(조각)을 하나씩 눌러 열 수 있어요. 예전엔 어느 문단을 눌러도 첫 조각이 열려서 📌 고정도 첫 조각에만 걸렸어요. 📌 표시도 고정한 그 문단 줄에 붙어요.']],
     ['2.0.0', '2026-11-04', ['기억을 완전히 새로 만들었어요. 원문을 문장으로 쪼개거나 요약하지 않고, 원문 조각을 그대로 넣어요. 짧은 메시지는 통째로, 긴 답장은 문단 몇 개씩이에요.', '조각마다 날짜 · 장소(상태창)와 꼬리표(종류 · 누가 · 누구랑 · 누구에게 · 무엇 · 어떻게 · 왜 · 모르게 할 사람)를 붙여요. Jev는 고르기만 하고 원문은 안 바꿔요. "어제 · 지난주"에는 실제 날짜를 같이 적어요.', '보낼 때 Jev가 이번 턴에 나올 인물을 골라요. 그 인물끼리 관계를 넣고, 그 인물이 나온 기억 · 뜻이 가까운 기억 · 낱말이 겹치는 기억을 모아 Jev가 심사해요. 기억 자리를 거의 다 기억에 써요.', '만남 기록: 두 인물이 같이 나온 기억을 날짜 · 장소별로 묶어요. 관계 줄에 처음 · 최근 만남(언제 · 어디서 · 무엇)이 들어가고, 인물 탭의 관계에서 펼쳐 볼 수 있어요.', '바뀐 정보: 새 기억이 옛 기억을 바꾸면(장소 · 비밀번호 · 계획 …) 표시하고, 옛 기억을 넣을 땐 새 기억도 같이 넣어요.', '인물 로어북 켜기: 이번 턴 인물의 이름 · 별명이 키인 로어북을 켜요 (예전 "기억으로 로어북 켜기"를 대신해요). 인물이 잘 안 바뀌어서 캐시에도 좋아요.', '이름표 꼬리 자동 합침: 미연_maid_form · 미연_2 · 미연(교복)은 미연으로 합쳐요. 인물 탭에서 펼쳐서 분리할 수 있어요.', '빠진 것: 문장 기억 · 칸 줄 · 기억 마디(마디 탭) · 명함 · 물건 이력 줄 · 모으기 인물 표. 연출 카드 · 친밀도 · 인물 · 약속 탭은 그대로예요.', '업데이트 뒤 한 번 "지금 전부 정리"를 눌러 주세요 (기억을 새 방식으로 다시 만들어요).']],
     ['1.0.21', '2026-11-02', ['긴 채팅(메시지 500개 넘게)에서 정리하다 화면이 멈추던 것 고침. 최신 정보 판정이 옛 기억 전부를 하나씩 비교하느라 560개 채팅에서 2분 넘게 멈췄어요. 이제 같은 결과를 몇 초 안에, 화면을 멈추지 않고 내요. 진행도 보여요.', '동시 요청 10개 제한을 없앴어요.', '설정 › 연결 › Jev › 모델 한도: 요청 한 번 최대 토큰(기본 16384)과 고르기 보기 최대 수(기본 255)를 모델에 맞게 바꿀 수 있어요. 넘으면 글을 줄이거나 나눠 보내요.', '긴 요청은 기다리는 시간도 길게 잡아요 (시간 초과로 다시 보내는 일 줄임).']],
@@ -3773,7 +3986,9 @@ details.more.danger summary{color:var(--tx2)}
     setHtml(document.getElementById('ja-top'), `<h1>${ui.onboard ? '시작하기' : TITLES[ui.view]}</h1><span class="sub">${label}</span>${ui.reading ? '<span class="pill reading"><i></i>채팅 읽는 중…</span><span class="loadbar reading" aria-hidden="true"><i></i></span>' : ''}${ui.saved ? `<span class="pill ok"><i></i>${escapeHtml(ui.saved)}</span>` : ''}<button class="iconbtn" data-act="close" aria-label="닫기">${icon('close')}</button>`);
     const tabbar = document.getElementById('ja-tabbar');
     tabbar.style.display = ui.onboard ? 'none' : '';
-    setHtml(tabbar, ui.onboard ? '' : VIEWS.filter(([id]) => id !== 'news' || ui.view === 'news').map(([id, lb, ic]) => `<button class="tab${ui.view === id ? ' on' : ''}" data-act="go" data-view="${id}">${icon(ic, 22)}${lb}${badge[id] && ui.view !== id ? '<i class="dot"></i>' : ''}</button>`).join(''));
+    // 폰 아래 탭: 업데이트 내역은 탭으로 안 만든다 (설정에서 열고, 그동안 설정 탭이 켜져 있다). 탭이 하나 늘면 좁은 폰에서 두 줄로 넘친다
+    const tabOn = (id) => ui.view === id || (id === 'settings' && ui.view === 'news');
+    setHtml(tabbar, ui.onboard ? '' : VIEWS.filter(([id]) => id !== 'news').map(([id, lb, ic]) => `<button class="tab${tabOn(id) ? ' on' : ''}" data-act="go" data-view="${id}">${icon(ic, 22)}${lb}${badge[id] && !tabOn(id) ? '<i class="dot"></i>' : ''}</button>`).join(''));
     sc.dataset.view = where;
     setHtml(document.getElementById('ja-wrap'), view);
     sc.scrollTop = keep ? top : 0;
@@ -4178,7 +4393,7 @@ details.more.danger summary{color:var(--tx2)}
     return `<button class="item" data-act="chunk" data-ck="${escapeHtml(ck)}" style="align-items:flex-start"><div class="t"><div class="row xs dim" style="margin-bottom:4px">#${c.mi + 1} · ${timeline[c.mi]?.role === 'user' ? '나' : escapeHtml(characterCache.name || '캐릭터')}${pinned ? ' <span class="tag pin">고정</span>' : ''}${c.vec ? '' : ' <span class="tag">색인 전</span>'}${names.map(n => `<span class="chip" style="padding:1px 8px">${escapeHtml(n)}</span>`).join('')}</div><div class="snip" style="display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden">${highlight(c.text, q)}</div></div></button>`;
   }
   function renderNews() {
-    return CHANGELOG.map(([v, date, items], i) => `<div class="card log"><h3>${v}${i === 0 ? ' <span class="pill ok"><i></i>지금 버전</span>' : ''}<span class="xs dim">${date}</span></h3><ul>${items.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ul></div>`).join('');
+    return '<div class="row"><button class="btn sm g" data-act="go" data-view="settings">‹ 설정</button></div>' + CHANGELOG.map(([v, date, items], i) => `<div class="card log"><h3>${v}${i === 0 ? ' <span class="pill ok"><i></i>지금 버전</span>' : ''}<span class="xs dim">${date}</span></h3><ul>${items.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ul></div>`).join('');
   }
 
   // ══ 기억 탭: 폴더(날짜 · 장소 / 인물 / 종류) → 메시지 카드 ══
@@ -4301,7 +4516,9 @@ details.more.danger summary{color:var(--tx2)}
     let list = packCards(sel, cfg);
     if (q) list = list.filter(x => `${x.name} ${x.when} ${x.text}`.includes(q));
     const isMine = (x) => cfg.dirCustom.some(y => y.id === x.id);
-    const cards = list.length ? `<div class="cgrid">${list.map(x => { const isOff = off.has(x.id); return `<div class="ccard${isOff ? ' off' : ''}"><div class="ch2"><b>${escapeHtml(x.name)}</b>${x.aff != null ? `<span class="tag">${x.aff >= 0 ? `가까움 ${x.aff}+` : `사이 나쁨 ${x.aff}↓`}</span>` : ''}<button class="tg-s btn sm ${isOff ? '' : 'g'}" data-act="card-toggle" data-id="${escapeHtml(x.id)}">${isOff ? '꺼짐' : '켜짐'}</button></div>${x.when ? `<div class="when">언제 · ${ph(x.when)}</div>` : ''}<div class="txt">${ph(x.text)}</div>${isMine(x) ? `<div class="acts"><span class="tag">내 카드</span><button class="btn sm g" data-act="card-edit" data-id="${escapeHtml(x.id)}">고치기</button><button class="btn sm g" data-act="card-del" data-id="${escapeHtml(x.id)}">지우기</button></div>` : ''}</div>`; }).join('')}</div>`
+    // 이 연출을 고른 턴에 같이 쓰는 질문 카드
+    const qcLinks = (did) => { const names = (DIR_ASK[did] ?? []).map(id => allQCards(cfg, true).find(q => q.id === id)?.name).filter(Boolean); return names.length ? `<div class="xs dim">🔗 질문 · ${escapeHtml(names.join(' · '))}</div>` : ''; };
+    const cards = list.length ? `<div class="cgrid">${list.map(x => { const isOff = off.has(x.id); return `<div class="ccard${isOff ? ' off' : ''}"><div class="ch2"><b>${escapeHtml(x.name)}</b>${x.aff != null ? `<span class="tag">${x.aff >= 0 ? `가까움 ${x.aff}+` : `사이 나쁨 ${x.aff}↓`}</span>` : ''}<button class="tg-s btn sm ${isOff ? '' : 'g'}" data-act="card-toggle" data-id="${escapeHtml(x.id)}">${isOff ? '꺼짐' : '켜짐'}</button></div>${x.when ? `<div class="when">언제 · ${ph(x.when)}</div>` : ''}<div class="txt">${ph(x.text)}</div>${qcLinks(x.id)}${isMine(x) ? `<div class="acts"><span class="tag">내 카드</span><button class="btn sm g" data-act="card-edit" data-id="${escapeHtml(x.id)}">고치기</button><button class="btn sm g" data-act="card-del" data-id="${escapeHtml(x.id)}">지우기</button></div>` : ''}</div>`; }).join('')}</div>`
       : `<div class="empty small">${q ? '찾는 카드가 없어요.' : '아직 카드가 없어요. 위 [+ 카드]로 하나 써 보세요.'}</div>`;
     const packHead = c.packEdit && cur?.user
       ? `<div class="newpack" style="margin-bottom:10px"><input class="inp" id="pe-icon" maxlength="2" value="${escapeHtml(cur.icon)}" style="width:52px;text-align:center"><input class="inp" id="pe-name" maxlength="20" value="${escapeHtml(cur.name)}" style="flex:1"><button class="btn sm p" data-act="pack-save">저장</button><button class="btn sm g" data-act="pack-edit-cancel">취소</button></div>`
@@ -4318,6 +4535,44 @@ details.more.danger summary{color:var(--tx2)}
           <div class="search" style="margin-bottom:10px">${icon('search', 18)}<input id="cq" placeholder="카드 찾기" value="${escapeHtml(c.q)}" autocomplete="off"></div>
           ${cards}${io}
         </section>
+      </div>
+      ${qcardSection()}`;
+  }
+
+  /** 질문 카드 (연출 카드 아래): 평소 턴에 "다음 답장에 필요할 기억"을 Jev가 고르는 질문. 켜기 · 세기 · 묶음 · 카드 켜기 · 내 카드 */
+  function qcardSection() {
+    const cfg = settings, off = new Set(cfg.qOff);
+    const packs = qcPackList();
+    const sel = packs.some(p => p.id === ui.qc.pack) ? ui.qc.pack : packs[0].id;
+    const cur = packs.find(p => p.id === sel);
+    const dirName = new Map([...Object.values(DIR_PACKS).flatMap(p => p.cards.map(([id, name]) => [id, name])), ...cfg.dirCustom.map(d => [d.id, d.name])]);
+    const linked = new Map();
+    for (const [did, ids] of Object.entries(DIR_ASK)) if (dirName.has(did)) for (const id of ids) linked.set(id, [...(linked.get(id) ?? []), dirName.get(did)]);
+    const head = `<div class="ctool"><label class="ctl"><b>질문</b>${sw('qCards', cfg.qCards, 'quick')}</label><div class="seg mini">${Object.entries(QC_FREQ_KO).map(([k, t]) => `<button class="${cfg.qFreq === k ? 'on' : ''}" data-act="qcfreq" data-v="${k}">${t}</button>`).join('')}</div><span class="meta">켜진 카드 ${allQCards(cfg).length}장${cfg.qCards ? '' : ' · 꺼져 있어요'}${cfg.story ? '' : ' · 인물 기록을 켜야 써요'}</span></div>`;
+    const chips = packs.map(p => `<button class="chip${sel === p.id ? ' on' : ''}${cfg.qPacks.includes(p.id) ? '' : ' offp'}" data-act="qc-pack" data-v="${p.id}">${escapeHtml(p.icon)} ${escapeHtml(p.name)} ${qcPackCards(p.id, cfg).length}</button>`).join('');
+    const list = qcPackCards(sel, cfg);
+    const packOn = cfg.qPacks.includes(sel);
+    const cards = list.length ? `<div class="cgrid">${list.map(x => { const isOff = off.has(x.id); return `<div class="ccard${isOff ? ' off' : ''}"><div class="ch2"><b>${escapeHtml(x.name)}</b>${x.aff != null ? `<span class="tag">${x.aff >= 0 ? `가까움 ${x.aff}+` : `사이 나쁨 ${x.aff}↓`}</span>` : ''}<button class="tg-s btn sm ${isOff ? '' : 'g'}" data-act="qc-toggle" data-id="${escapeHtml(x.id)}">${isOff ? '꺼짐' : '켜짐'}</button></div>${x.when ? `<div class="when">언제 · ${ph(x.when)}</div>` : ''}<div class="txt">${ph(x.q)}</div>${linked.has(x.id) ? `<div class="xs dim">🔗 연출 · ${escapeHtml(linked.get(x.id).join(' · '))}</div>` : ''}${sel === 'custom' ? `<div class="acts"><span class="tag">내 카드</span><button class="btn sm g" data-act="qc-edit" data-id="${escapeHtml(x.id)}">고치기</button><button class="btn sm g" data-act="qc-del" data-id="${escapeHtml(x.id)}">지우기</button></div>` : ''}</div>`; }).join('')}</div>`
+      : `<div class="empty small">${sel === 'custom' ? '아직 내 질문 카드가 없어요. [+ 질문 카드]로 하나 써 보세요.' : '카드가 없어요.'}</div>`;
+    return `<section class="card qcsec">
+        <div class="ch"><h2>질문 카드</h2></div>
+        <div class="help" style="margin:-4px 0 12px">평소 턴엔 무엇을 기억해 와야 할지 흐려요. Jev가 지금 장면에 맞는 질문을 골라 그 질문으로 기억을 찾고 심사해요. 메인 모델에는 안 보내요. 🔗 연출은 그 연출 카드를 고른 턴에 같이 써요.</div>
+        ${head}
+        <div class="hscroll" style="margin-top:12px">${chips}</div>
+        <div class="crumb"><b>${escapeHtml(cur?.icon ?? '')} ${escapeHtml(cur?.name ?? '')}</b><span>· ${list.length}장${packOn ? '' : ' · 꺼짐'}</span><span class="sp"></span><button data-act="qc-pack-toggle" data-v="${sel}">${packOn ? '묶음 끄기' : '묶음 켜기'}</button><button class="btn sm p" data-act="qc-new">+ 질문 카드</button></div>
+        ${cards}
+      </section>`;
+  }
+  function qcardFormSheet() {
+    const editing = ui.sheet.edit ? settings.qCustom.find(x => x.id === ui.sheet.edit) : null;
+    return `<div class="sh"><div class="t"><h3>${editing ? '질문 카드 고치기' : '새 질문 카드'}</h3><div class="small muted">✍️ 내 카드 · 장면이 맞으면 Jev가 골라 이 질문으로 기억을 찾아요</div></div><button class="iconbtn" data-act="sheet-close" aria-label="닫기">${icon('close')}</button></div>
+      <div class="col" style="gap:8px">
+        <input class="inp" id="qc-name" maxlength="40" placeholder="이름 (예: 마력 상태)" value="${escapeHtml(editing?.name ?? '')}">
+        <input class="inp" id="qc-when" maxlength="160" placeholder="언제 (예: {char}가 마법을 쓰려 할 때)" value="${escapeHtml(editing?.when ?? '')}">
+        <textarea class="inp" id="qc-q" rows="3" maxlength="200" placeholder="질문 (예: {char}의 마력은 얼마나 남아 있었지?)">${escapeHtml(editing?.q ?? '')}</textarea>
+        <div class="phs"><span class="xs dim">넣기</span><button class="chip" data-act="qc-ph" data-v="{char}">캐릭터</button><button class="chip" data-act="qc-ph" data-v="{user}">나</button><button class="chip" data-act="qc-ph" data-v="{other}">다른 인물</button><button class="chip" data-act="qc-ph" data-v="{place}">장소</button><span class="xs dim">· 조사는 알아서 맞춰요</span></div>
+        <input class="inp" id="qc-aff" type="number" inputmode="numeric" min="-10" max="10" placeholder="가까움 조건 (예: 3 = 3 이상일 때만, 비우면 없음)" value="${editing?.aff ?? ''}">
+        <div class="row" style="justify-content:flex-end;gap:6px;margin-top:4px"><button class="btn g" data-act="sheet-close">취소</button><button class="btn p" data-act="qc-save">${editing ? '저장' : '추가'}</button></div>
       </div>`;
   }
 
@@ -4341,12 +4596,12 @@ details.more.danger summary{color:var(--tx2)}
   // ══ 시트: 인물 · 기억 ══
   function renderSheet() {
     const s = ui.sheet;
-    const inner = s.type === 'person' ? personSheet(s.name) : s.type === 'chunk' ? chunkSheet(s.ck) : s.type === 'dircards' ? dirSheet() : s.type === 'memfilter' ? memFilterSheet() : s.type === 'cardform' ? cardFormSheet() : '';
+    const inner = s.type === 'person' ? personSheet(s.name) : s.type === 'chunk' ? chunkSheet(s.ck) : s.type === 'dircards' ? dirSheet() : s.type === 'memfilter' ? memFilterSheet() : s.type === 'cardform' ? cardFormSheet() : s.type === 'qcardform' ? qcardFormSheet() : '';
     return inner;
   }
-  const PH = { char: '캐릭터', user: '나', other: '다른 인물' };
-  const PH_J = { 이: ['이', '가'], 가: ['이', '가'], 은: ['은', '는'], 는: ['은', '는'], 을: ['을', '를'], 를: ['을', '를'], 과: ['과', '와'], 와: ['과', '와'] };
-  const ph = (t) => escapeHtml(t).replace(/{(char|user|other)}(이|가|은|는|을|를|과|와)?/g, (_, k, j) => `<span class="ph">${PH[k]}</span>${j ? PH_J[j][hasBatchim(PH[k]) ? 0 : 1] : ''}`);
+  const PH = { char: '캐릭터', user: '나', other: '다른 인물', place: '장소' };
+  const PH_J = { 이: ['이', '가'], 가: ['이', '가'], 은: ['은', '는'], 는: ['은', '는'], 을: ['을', '를'], 를: ['을', '를'], 과: ['과', '와'], 와: ['과', '와'], 이나: ['이나', '나'], 나: ['이나', '나'] };
+  const ph = (t) => escapeHtml(t).replace(/{(char|user|other|place)}(이나|이|가|은|는|을|를|과|와|나)?/g, (_, k, j) => `<span class="ph">${PH[k]}</span>${j ? PH_J[j][hasBatchim(PH[k]) ? 0 : 1] : ''}`);
   function dirSheet() {
     const cfg = settings, pid = ui.sheet.pack ?? 'basic';
     const off = new Set(cfg.dirOff);
@@ -4439,7 +4694,9 @@ details.more.danger summary{color:var(--tx2)}
     return `<div class="onb">${steps}<h2>기억하는 방식</h2><p class="lead">나중에 설정에서 언제든 바꿀 수 있어요.</p>
       <div class="card"><div class="lb" style="font-weight:600;margin-bottom:8px">얼마나 넣을까요?</div>${presetSeg(cur)}
         <div class="field inline" style="margin-top:8px"><div><div class="lb">인물 · 관계 · 약속 기록</div><div class="help">보낸 뒤 뒤에서 정리해요. 보내기는 느려지지 않아요.</div></div>${sw('story', d.story)}</div>
-        <div class="field inline"><div><div class="lb">감독 힌트</div><div class="help">답장마다 템포 · 분위기와 장면에 맞는 연출을 짧게 귀띔해요. 내가 이끌고 싶으면 꺼 두세요.</div></div>${sw('director', d.director)}</div></div>
+        <div class="field inline"><div><div class="lb">감독 힌트</div><div class="help">답장마다 템포 · 분위기와 장면에 맞는 연출을 짧게 귀띔해요. 내가 이끌고 싶으면 꺼 두세요.</div></div>${sw('director', d.director)}</div>
+        <div class="field inline"><div><div class="lb">🏛️ JEV 이름:대사 모듈</div><div class="help">대사를 "이름: 대사"로 쓰게 하는 Risu 모듈을 만들어 켜요. 누가 한 말인지 더 잘 기억해요.</div></div>${sw('nlModule', d.nlModule)}</div>
+        <div class="field inline"><div><div class="lb">"이름:" 숨기기</div><div class="help">채팅 화면에서만 대사 앞 "이름:"을 안 보이게 해요 (모듈을 켰을 때).</div></div>${sw('nlHide', d.nlHide)}</div></div>
       <div class="card small muted">토큰을 아끼려면 Risu 설정에서 <b>최대 컨텍스트</b>나 <b>채팅 범위</b>를 줄이세요. 줄어든 만큼 JevArchive가 옛날 대화에서 필요한 부분만 넣어요. Risu 자체 메모리(하이파 · 수파)는 꺼 두세요.</div>
       ${nav(true, 'onb-finish', '완료')}</div>`;
   }
@@ -4537,6 +4794,12 @@ details.more.danger summary{color:var(--tx2)}
         <div class="field"><label>넣는 위치</label><select class="sel" data-field="injectMode"><option value="last_user"${d.injectMode === 'last_user' ? ' selected' : ''}>최신 입력 바로 앞</option><option value="system"${d.injectMode === 'system' ? ' selected' : ''}>시스템 메시지로</option></select><div class="help">프롬프트에 <b>[jevarchive]</b>를 써 두면 그 자리에 들어가요.</div></div>
         <div class="field"><div class="row"><label>메인 모델에게 하는 안내</label><span class="sp"></span><button class="btn sm g" data-act="note-reset">기본값으로</button></div><textarea class="inp" data-field="note" rows="2">${escapeHtml(d.note)}</textarea><div class="help">기억 블록 맨 위 한 줄. 비우면 안 넣어요.</div></div>
       </section>
+      <section class="card"><div class="ch"><h2>🏛️ JEV 이름:대사 모듈</h2></div>
+        <div class="help" style="margin:-4px 0 6px">Risu 모듈 목록에 모듈을 만들어 켜요(모든 채팅). 대사를 "이름: 대사"로 쓰게 해서 누가 한 말인지 더 잘 기억해요. 끄면 모듈만 꺼요 (지우지 않아요).</div>
+        <div class="field inline"><div><label>모듈 켜기</label><div class="help">이미 다른 이름:대사 모듈을 쓰고 있으면 하나만 켜 두세요.</div></div>${sw('nlModule', d.nlModule)}</div>
+        <div class="field inline"><div><label>"이름:" 숨기기</label><div class="help">채팅 화면에서만 대사 앞 "이름:"을 안 보이게 해요. 모델과 기억에는 그대로예요.</div></div>${sw('nlHide', d.nlHide)}</div>
+        <div class="field inline"><div><label>장소 · 날짜 · 시간 로어북</label><div class="help">답장 맨 위에 [날짜 ◆ 시간 ◆ 장소 ◆ 날씨] 한 줄을 쓰게 해요. 기억의 날짜 · 장소 스티커가 정확해져요. 봇에 이미 상태창이 있으면 꺼 두세요.</div></div>${sw('nlScene', d.nlScene)}</div>
+      </section>
       <section class="card"><div class="ch"><h2>앱</h2></div>
         <div class="field inline"><div><label>채팅 화면 바로가기</label><div class="help">채팅 화면에 버튼을 띄워요.</div></div>${sw('showButton', d.showButton)}</div>
         <div class="field inline"><div><label>인물 로어북 켜기</label><div class="help">리스 로어북은 채팅 메시지에서만 트리거를 찾아요. 이걸 켜면 보낼 때 이번 턴에 나올 인물(바로 전 답장 때 Jev가 고른 인물 + 내 말 · 바로 전 메시지에 나온 이름)의 이름 · 별명이 키인 로어북을 켜요. 인물이 잘 안 바뀌어서 켜지는 로어북도 잘 안 바뀌어요 (캐시에 좋아요). 표시는 화면과 메인 모델에서 빼요.</div></div>${sw('loreTrig', d.loreTrig !== false)}</div>
@@ -4619,12 +4882,14 @@ details.more.danger summary{color:var(--tx2)}
     ui.saveTimer = null;
     if (!ui.draft) return;
     const before = embedProfile();
+    const nlBefore = nlKey(settings);
     const draft = ui.draft;
     try { await saveSettings(draft); } catch (error) { setSaved(''); toast(String(error?.message ?? error)); return; }
     if (ui.draft === draft) ui.draft = { ...settings };
     setSaved('저장됨');
     setTimeout(() => { if (ui.saved === '저장됨') setSaved(''); }, 2000);
     if (embedProfile() !== before) toast('임베딩이 바뀌었어요. 다음에 보낼 때(또는 지금 전부 색인) 다시 색인해요.');
+    if (nlKey(settings) !== nlBefore) void applyNameLineModule();
   }
   async function patchSettings(p) {
     const inSettings = ui.view === 'settings' && !ui.onboard;
@@ -4633,6 +4898,44 @@ details.more.danger summary{color:var(--tx2)}
     if (inSettings) ui.draft = next;
     await saveSettings(next);
     if (inSettings && ui.draft === next) ui.draft = { ...settings };
+  }
+
+  // ══ 🏛️ JEV 이름:대사 모듈: 설정에 맞춰 Risu 모듈을 만들고 켜고 끈다 ══
+  //  OmniNexus처럼 DB의 modules에 넣고 enabledModules로 켠다. 우리 항목(주석으로 찾음)만 바꾸고 사용자가 더한 항목은 둔다. 바뀐 게 없으면 안 쓴다
+  const NL_MINE = new Set(['jev-name-line', 'jev-scene', NL_HIDE.comment]);
+  const nlKey = (c) => [c.nlModule, c.nlHide, c.nlScene].map(Boolean).join();
+  async function syncNameLineModule(cfg = settings) {
+    if (!R.getDatabase || !R.setDatabase) return { ok: false, why: '이 Risu 버전에서는 모듈을 만들 수 없어요.' };
+    if (R.requestPluginPermission && !await R.requestPluginPermission('db')) return { ok: false, why: '모듈을 만들려면 데이터베이스 권한이 필요해요.' };
+    const db = await R.getDatabase(['modules', 'enabledModules']);
+    if (!db) return { ok: false, why: 'Risu 데이터베이스를 못 읽었어요.' };
+    const arr = (x) => (Array.isArray(x) ? x : []);
+    const list = arr(db.modules).filter(m => m && typeof m === 'object');
+    const at = list.findIndex(m => m.id === NL_MODULE.id || m.namespace === NL_MODULE.id);
+    const enabled = arr(db.enabledModules).map(String);
+    if (!cfg.nlModule && at < 0) return { ok: true };   // 만든 적 없으면 건드리지 않는다
+    const old = at < 0 ? {} : list[at];
+    const lore = { key: '', secondkey: '', mode: 'normal', alwaysActive: true, selective: false, useRegex: false, bookVersion: 2 };
+    const mod = {
+      ...old, id: NL_MODULE.id, namespace: NL_MODULE.id, name: NL_MODULE.name, description: NL_MODULE.description, hideIcon: false, lowLevelAccess: false,
+      lorebook: [...arr(old.lorebook).filter(x => x && !NL_MINE.has(x.comment)), { ...lore, comment: 'jev-name-line', content: NL_LORE, insertorder: 995 }, ...(cfg.nlScene ? [{ ...lore, comment: 'jev-scene', content: NL_SCENE, insertorder: 994 }] : [])],
+      regex: [...arr(old.regex).filter(x => x && !NL_MINE.has(x.comment)), ...(cfg.nlHide ? [NL_HIDE] : [])],
+      trigger: arr(old.trigger), assets: arr(old.assets),
+    };
+    const modules = [...list];
+    if (at < 0) modules.push(mod); else modules[at] = mod;
+    const en = enabled.filter(x => x !== NL_MODULE.id);
+    if (cfg.nlModule) en.push(NL_MODULE.id);
+    if (JSON.stringify(modules) === JSON.stringify(list) && JSON.stringify(en) === JSON.stringify(enabled)) return { ok: true };
+    await R.setDatabase({ modules, enabledModules: en });
+    return { ok: true, changed: true };
+  }
+  /** 설정이 바뀐 뒤: 모듈 맞추기 + 알림 */
+  async function applyNameLineModule() {
+    const r = await syncNameLineModule().catch(error => ({ ok: false, why: String(error?.message ?? error) }));
+    if (!r.ok) toast(r.why);
+    else if (r.changed) toast(settings.nlModule ? 'Risu 모듈 목록의 "🏛️ JEV 이름:대사"를 맞춰 켰어요.' : '"🏛️ JEV 이름:대사" 모듈을 껐어요.');
+    return r;
   }
   function pickPreset(d, f, value) {
     if (f === 'jevPreset') { const p = JEV_PRESETS[value]; return { ...d, jevPreset: value, jevEndpoint: p.endpoint, jevModel: p.model }; }
@@ -4827,6 +5130,64 @@ details.more.danger summary{color:var(--tx2)}
         render();
         return;
       }
+      // ── 질문 카드 ──
+      case 'qc-pack': ui.qc.pack = el.dataset.v; render(); return;
+      case 'qc-pack-toggle': {
+        const packs = new Set(settings.qPacks);
+        if (packs.has(el.dataset.v)) packs.delete(el.dataset.v); else packs.add(el.dataset.v);
+        await patchSettings({ qPacks: [...packs] });
+        render();
+        return;
+      }
+      case 'qcfreq': {
+        for (const b of el.parentElement.children) b.classList.toggle('on', b === el);
+        settings.qFreq = el.dataset.v;
+        if (ui.draft) ui.draft.qFreq = el.dataset.v;
+        setSaved('저장 중…');
+        void patchSettings({ qFreq: el.dataset.v }).then(() => { setSaved('저장됨'); setTimeout(() => { if (ui.saved === '저장됨') setSaved(''); }, 1500); }, (error) => toast(String(error?.message ?? error)));
+        return;
+      }
+      case 'qc-toggle': {
+        const id = el.dataset.id, off = new Set(settings.qOff);
+        if (off.has(id)) off.delete(id); else off.add(id);
+        el.closest('.ccard')?.classList.toggle('off', off.has(id));
+        el.textContent = off.has(id) ? '꺼짐' : '켜짐';
+        el.classList.toggle('g', !off.has(id));
+        settings.qOff = [...off];
+        void patchSettings({ qOff: [...off] });
+        return;
+      }
+      case 'qc-new': ui.sheet = { type: 'qcardform', edit: null, name: 'qc-new' }; render(); setTimeout(() => document.getElementById('qc-name')?.focus(), 50); return;
+      case 'qc-edit': ui.sheet = { type: 'qcardform', edit: el.dataset.id, name: el.dataset.id }; render(); return;
+      case 'qc-ph': {
+        const ta = document.getElementById('qc-q');
+        if (!ta) return;
+        const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? a;
+        ta.value = ta.value.slice(0, a) + el.dataset.v + ta.value.slice(b);
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = a + el.dataset.v.length;
+        return;
+      }
+      case 'qc-save': {
+        const v = (id) => document.getElementById(id)?.value?.trim() ?? '';
+        const card = { name: v('qc-name'), when: v('qc-when'), q: v('qc-q'), aff: v('qc-aff') };
+        if (!card.name || !card.q) { toast('이름과 질문은 꼭 써 주세요.'); return; }
+        const editId = ui.sheet?.edit ?? null;
+        const list = editId ? settings.qCustom.map(x => (x.id === editId ? { ...x, ...card, id: editId } : x)) : [...settings.qCustom, { ...card, id: `qu${Date.now().toString(36)}` }];
+        await patchSettings({ qCustom: list, qPacks: [...new Set([...settings.qPacks, 'custom'])] });
+        ui.qc.pack = 'custom';
+        ui.sheet = null;
+        render();
+        toast(editId ? '고쳤어요.' : '추가했어요. 장면이 맞으면 Jev가 골라요.');
+        return;
+      }
+      case 'qc-del': {
+        const c = settings.qCustom.find(x => x.id === el.dataset.id);
+        if (!c || !await confirmDialog(`"${c.name}" 질문 카드를 지울까요?`, '지우기', true)) return;
+        await patchSettings({ qCustom: settings.qCustom.filter(x => x.id !== c.id) });
+        render();
+        return;
+      }
       case 'pack-new': ui.cards.newPack = true; render(); document.getElementById('np-name')?.focus(); return;
       case 'pack-new-cancel': ui.cards.newPack = false; render(); return;
       case 'pack-create': {
@@ -5005,6 +5366,7 @@ details.more.danger summary{color:var(--tx2)}
         ui.onboard = null;
         ui.view = 'now';
         render();
+        if (settings.nlModule) void applyNameLineModule();
         const st = storageStats();
         toast(st.sendable - st.indexedMsgs > 0 ? '준비됐어요. 이전 대화가 있으면 "지금 색인"을 눌러 주세요.' : '준비됐어요. 대화를 이어 가면 기억해요.');
         return;
@@ -5302,6 +5664,8 @@ details.more.danger summary{color:var(--tx2)}
   await loadSettings();
   await loadUsage();
   await initLocalStore();
+  // 이름:대사 모듈을 켜 뒀으면 내용을 이 버전에 맞춘다 (바뀐 게 없으면 안 쓴다)
+  if (settings.nlModule) void syncNameLineModule().catch(error => setError('이름:대사 모듈', error));
   await R.registerSetting('JevArchive', () => openPanel(), '🏛️', 'html', 'jevarchive-settings');
   if (R.registerButton) {
     for (const [location, id] of [['hamburger', 'jevarchive-side'], ['chat', 'jevarchive-chat']]) {
@@ -5338,7 +5702,7 @@ details.more.danger summary{color:var(--tx2)}
       beforeRequestHandler, afterRequestHandler, indexAll, analyzeAll, ensureChat, refreshChat, flushVectors, flushStory, flushCards, saveSettings,
       chunkText, overlapStart, chatEntries, toSigns, packSigns, unpackSigns, storageStats, recall, parseStatus, storyClock, clockLabel, peopleIn, mergePeople, hidePerson, togglePin, chunkByCk, searchMemory, searchFacts,
       renderNow, renderPeople, renderPromises, renderMemory, tagCandidates, tagNouns, addTag, topTags, backupToLore, readLoreBackup, applyBackup, currentChatObj, backupData, renderSettings, renderOnboard, graphSvg, personSheet, chunkSheet, presetOf,
-      getSettings: () => settings, getStory: () => story, allDirCards, dirEligible, dirSheet, directorBox, DIR_PACKS, getTimeline: () => timeline, getChunks: () => chunks, getCards: () => cardStore, getFacts: () => facts, graphData, busyIcon, getBusy: () => ({ ...busyN, shown: busyShown }), getMemStore: () => memStore, tagMessages, memBacklog, factBacklog, searchFacts, flushMem, clearMem, factItem, getLastRecall: () => lastRecall, getLastRescue: () => lastRescue, previewRecall, previewTail, withSpeaker, speakerOf, liveThreads, supersedeAll, supersedeFor, supBacklog, loreHits, loreInputHandler, loreDisplayHandler, stripLoreMark, splitAlias, itemRecords, cardOf, personCards, readReqExtra, linesOf, callJev, fitChoices, shrinkState, memParts, anchorDates, memLine, pickCast, memThreads, variantOf, addPerson, meetingsOf, meetFold, debugLog: () => debugLog, ui,
+      getSettings: () => settings, getStory: () => story, allDirCards, dirEligible, dirSheet, directorBox, DIR_PACKS, QCARD_PACKS, DIR_ASK, allQCards, qcQuestions, qcFrom, renderCards, presentCast, syncNameLineModule, NL_MODULE, NL_HIDE, NL_SCENE, getTimeline: () => timeline, getChunks: () => chunks, getCards: () => cardStore, getFacts: () => facts, graphData, busyIcon, getBusy: () => ({ ...busyN, shown: busyShown }), getMemStore: () => memStore, tagMessages, memBacklog, factBacklog, searchFacts, flushMem, clearMem, factItem, getLastRecall: () => lastRecall, getLastRescue: () => lastRescue, previewRecall, previewTail, withSpeaker, speakerOf, liveThreads, supersedeAll, supersedeFor, supBacklog, loreHits, loreInputHandler, loreDisplayHandler, stripLoreMark, splitAlias, itemRecords, cardOf, personCards, readReqExtra, linesOf, callJev, fitChoices, shrinkState, memParts, anchorDates, memLine, pickCast, memThreads, variantOf, addPerson, meetingsOf, meetFold, debugLog: () => debugLog, ui,
       waitJob: async () => { await (job ?? Promise.resolve()); await (storyJob ?? Promise.resolve()); },
     };
   }
