@@ -1,7 +1,7 @@
 //@name jevarchive
-//@display-name 🏛️JevArchive 2.0.3
+//@display-name 🏛️JevArchive 2.2.0
 //@api 3.0
-//@version 2.0.3
+//@version 2.2.0
 //@update-url https://raw.githubusercontent.com/happydesk213124/JevArchive2/main/jevarchive.js
 //@arg jev_api_key string (선택) Jev API 키. JevArchive 화면의 설정에서 넣어도 됩니다.
 
@@ -11,6 +11,9 @@
 //  기억 2.0 = 원문 조각 그대로 + 꼬리표 (보낸 뒤 뒤에서 만든다)
 //    · 조각마다 날짜 · 장소(상태창), 종류, 누가 · 누구랑 · 누구에게 · 무엇 · 어떻게 · 왜 · 모르게 할 사람. Jev는 고르기만, 원문은 안 바꾼다
 //    · 넣기: 이번 턴 인물(Jev) · 임베딩 · 글자로 후보 → Jev가 0~3점 → 높은 순 + 앞뒤 조각을 날짜 순으로. 바뀐 정보는 표시
+//  노드 · 인물 위키 2.1 (보낸 뒤, 뒤에서)
+//    · 꼬리표에 중요도(0~3)와 동사(사람이 써 둔 목록에서 Jev가 고름)를 더한다. 새 문장은 안 쓴다
+//    · 장면: 날짜 · 장소가 바뀌는 곳에서 묶는다. 인물 위키: 지금 상태 · 전에는 · 들은 것 · 모르는 것 · 겪은 장면 (따로 저장 안 함)
 //  이야기 (보낸 뒤, 뒤에서)
 //    · 인물 · 관계(가까워짐/멀어짐 · 사이) · 약속 · 비밀 · 이야기 시간(상태줄)
 //    · 감독 힌트(선택): 회상과 같은 Jev 호출에서 템포 · 꺼낼 약속 · 먼저 움직일 인물 · 분위기를 고른다
@@ -90,7 +93,7 @@
     story: true, cards: false, director: false, intim: false, jevPrice: 0.042, jevParallel: 2, jevMaxTok: 16384, jevMaxOpts: 255, sceneChars: 6000, tags: true, skipStatus: true, busySpin: true, latest: true, loreTrig: true,
     dirCards: true, dirAuto: true, dirFreq: 'normal', dirPacks: ['basic', 'romance', 'daily', 'mystery', 'fantasy', 'horror', 'custom'], dirOff: [], dirCustom: [], dirUserPacks: [],
     qCards: true, qFreq: 'normal', qPacks: ['basic', 'romance', 'daily', 'mystery', 'fantasy', 'horror', 'custom'], qOff: [], qCustom: [],
-    nlModule: false, nlHide: false, nlScene: false,
+    nlModule: false, nlHide: false, nlScene: false, wiki: true, wikiInject: false, keep: false, hop: true, memCands: 60, semKeep: false, wide: false,
     injectMode: 'last_user', note: DEFAULT_NOTE, showButton: true,
   };
 
@@ -233,6 +236,13 @@
       nlModule: s.nlModule === true,
       nlHide: s.nlHide === true,
       nlScene: s.nlScene === true,
+      wiki: s.wiki !== false,
+      wikiInject: s.wikiInject === true,
+      keep: s.keep === true,
+      hop: s.hop !== false,
+      memCands: clampNum(s.memCands, 60, 20, 200),
+      semKeep: s.semKeep === true,
+      wide: s.wide === true,
       injectMode: s.injectMode === 'system' ? 'system' : 'last_user',
       note: typeof s.note === 'string' ? s.note.trim() : DEFAULT_NOTE,
       showButton: s.showButton !== false,
@@ -311,6 +321,7 @@
     return lines.map((l, i) => (fixed[i] || toks[i] <= cap ? l : l.slice(0, Math.max(1, Math.floor(l.length * (cap - 1) / toks[i]))) + '…')).join('\n');
   }
   const TOO_LONG = /token|length|too long|too large|context|exceed|maximum|limit/i;
+  let jevReqOpts = Infinity;   // 요청 하나에 실을 수 있는 보기 수 (모델이 거절하며 알려 준 값. 모르면 제한 없음)
   async function callJev(state, questions, cfg = settings, depth = 0) {
     questions = fitChoices(questions, jevMaxOpts(cfg));
     const max = Math.floor(jevMaxTok(cfg) * 0.92);   // 우리 셈이 Jev 셈과 조금 달라서 8% 여유
@@ -323,9 +334,15 @@
       const [a, b] = await Promise.all([callJev(state, pick(keys.slice(0, half)), cfg, depth + 1), callJev(state, pick(keys.slice(half)), cfg, depth + 1)]);
       return { ...a, ...b };
     }
+    const splitHalf = () => { const half = Math.ceil(keys.length / 2); const pick = (ks) => Object.fromEntries(ks.map(k => [k, questions[k]])); return Promise.all([callJev(state, pick(keys.slice(0, half)), cfg, depth + 1), callJev(state, pick(keys.slice(half)), cfg, depth + 1)]).then(([a, b]) => ({ ...a, ...b })); };
+    const optN = keys.reduce((n, k) => { const c = questions[k]?.criteria; return n + (Array.isArray(c) ? c.length : c && typeof c === 'object' ? Object.keys(c).length : 2); }, 0);
+    if (optN > jevReqOpts && keys.length > 1 && depth < 8) return splitHalf();
     const room = Math.max(200, max - qTok);
     try { return await callJevOnce(shrinkState(state, room), questions, cfg); }
     catch (error) {
+      const msg = String(error?.message);
+      const cap = /([0-9]+) per request/i.exec(msg);
+      if ((error?.status === 422 || error?.status === 400) && cap && /option/i.test(msg) && keys.length > 1 && depth < 8) { jevReqOpts = Math.min(jevReqOpts, +cap[1]); return splitHalf(); }
       if (error?.status !== 400 || !TOO_LONG.test(String(error?.message))) throw error;
       return callJevOnce(shrinkState(state, Math.max(150, Math.floor(room * 0.6))), questions, cfg);
     }
@@ -1738,7 +1755,8 @@ let lastRescue = null;
     const todo = settings.story ? storyBacklog().slice(0, 8) : []; // 이야기 정리는 순서대로 (관계 · 약속이 시간 순서라)
     // 바뀐 정보 판정: 저장이 끝난 뒤 오래된 것부터 (보낼 때마다 60조각까지)
     const sWait = settings.latest !== false && supBacklog().length > 0;
-    if (!mtodo.length && !todo.length && !sWait) return;
+    const wWait = wikiBacklog().length > 0;
+    if (!mtodo.length && !todo.length && !sWait && !wWait) return;
     const key = chatKey;
     const tr = beginTrace('story');
     storyJob = (async () => {
@@ -1748,6 +1766,9 @@ let lastRescue = null;
       else { await mem1(); await story1(); }
       const st = chatKey === key && !storyAll && settings.latest !== false ? supBacklog().slice(0, 60) : [];
       if (st.length) await timed(tr, '바뀐 정보 판정', () => supersedeFor(st), `조각 ${st.length}개`);
+      // 2.1 전에 만든 기억: 중요도 · 동사를 최근 것부터 조금씩 (보낼 때마다 24조각까지)
+      const wt = chatKey === key && !storyAll ? wikiBacklog().slice(-24) : [];
+      if (wt.length) await timed(tr, '중요도 · 동사', () => tagExtras(wt), `조각 ${wt.length}개`);
     })()
       .catch(error => setError('이야기 분석', error))
       .finally(() => { endTrace(tr); storyJob = null; if (chatKey === key) softRender(); });
@@ -1780,6 +1801,7 @@ let lastRescue = null;
         }, () => `${done}/${total}`);
       } finally { endTrace(tr); }
       if (chatKey === room && settings.latest !== false && supBacklog().length) { onProgress?.(0, 1, '바뀐 정보'); try { await supersedeAll((d, t) => onProgress?.(d, t, '바뀐 정보')); } catch (error) { setError('바뀐 정보 판정', error); } }
+      if (chatKey === room && wikiBacklog().length) { onProgress?.(0, 1, '중요도 · 동사'); try { await tagExtras(wikiBacklog(), (d, t) => onProgress?.(d, t, '중요도 · 동사')); } catch (error) { setError('중요도 · 동사', error); } }
       await flushStory();
       await flushMem();
       return new Set([...mtodo, ...todo]).size;
@@ -2578,6 +2600,20 @@ Keep the in-story calendar consistent: move the date and time forward only as th
   const FACT_K = { event: 'E', action: 'A', fact: 'F', promise: 'P', secret: 'S' };
   const TAG_KINDS = new Set(['event', 'action', 'promise', 'secret']);
   const WORTH_LOW = 1.5;
+  // 2.1 노드 · 인물 위키: 꼬리표에 중요도(0~3)와 동사를 더한다. 동사는 사람이 써 둔 목록에서 Jev가 고른다 (Jev는 문장을 못 쓴다)
+  const MEM_WEIGHT = ['filler, greeting, or small talk', 'minor detail', 'matters later in the story', 'turning point, promise, secret, or lasting change'];
+  const MEM_VERBS = {
+    promise: ['promises or agrees to do later', '약속했다'], confess: ['confesses feelings', '고백했다'], reveal: ['reveals or admits something', '털어놓았다'], hide: ['hides or keeps secret', '숨겼다'],
+    learn: ['learns, finds out, or realizes', '알게 됐다'], lie: ['lies or deceives', '거짓말했다'], ask: ['asks for or requests', '부탁했다'], refuse: ['refuses or rejects', '거절했다'], accept: ['accepts or agrees', '받아들였다'],
+    give: ['gives or hands over', '주었다'], get: ['receives or obtains', '받았다'], lose: ['loses something', '잃었다'], find: ['finds or discovers', '찾았다'],
+    meet: ['meets or is introduced to', '만났다'], part: ['parts from or says goodbye', '헤어졌다'], arrive: ['arrives or comes to a place', '도착했다'], leave: ['leaves or goes away', '떠났다'],
+    fight: ['fights or argues', '싸웠다'], makeup: ['makes up or reconciles', '화해했다'], help: ['helps or protects', '도왔다'], harm: ['hurts or attacks someone', '다치게 했다'], injured: ['gets hurt or sick', '다쳤다'], heal: ['recovers or treats', '나았다'],
+    comfort: ['comforts or cares for', '위로했다'], angry: ['gets angry at', '화냈다'], sorry: ['apologizes', '사과했다'], thank: ['thanks', '고마워했다'], touch: ['touches, hugs, or holds hands', '가까이했다'],
+    decide: ['decides or resolves', '결심했다'], plan: ['plans or prepares', '계획했다'], make: ['makes or finishes something', '해냈다'], fail: ['fails or makes a mistake', '실패했다'],
+    like: ['likes or loves', '좋아한다'], dislike: ['dislikes or fears', '싫어한다'], is: ['is or becomes (state, job, trait)', '이다'], has: ['has or owns', '가지고 있다'],
+  };
+  const MEM_VERB_OPTS = { ...Object.fromEntries(Object.entries(MEM_VERBS).map(([k, v]) => [k, v[0]])), none: 'none of these' };
+  const wikiOn = (cfg = settings) => cfg.wiki !== false;
   const SUP_KINDS = new Set(['fact', 'event', 'action', 'promise']);
 
   // ── 상태창 줄: [Status | Date: … | Money: …] · [2024-05-03 ◆ 18:20 ◆ 해변 카페] ──
@@ -2700,6 +2736,9 @@ Keep the in-story calendar consistent: move the date and time forward only as th
 - how: the manner or means (a word), none if not stated.
 - why: the sentence Wn.k that states the reason or purpose, self if the piece itself states it, none if no sentence does.
 - from: only for a secret: who must NOT learn it; none otherwise.`;
+  const MEM_TAG_GUIDE_X = `
+- weight: how much the piece matters for the story later.
+- verb: the closest verb for what "who" does or is in the piece; none if nothing fits.`;
   const TAG_PART = /(은|는|이|가|을|를|에게|한테|께|와|과|랑|이랑|하고|에서|에|으로|로|도|의|만|까지|부터|야|이야|이다|였다|했다|했어|해)$/u;
   const memWords = (s) => { const out = []; for (const w0 of String(s).split(/[^0-9A-Za-z가-힣]+/)) { let w = w0; for (let k = 0; k < 2 && w.length > 2; k++) w = w.replace(TAG_PART, ''); if (w.length >= 2 && !out.includes(w)) out.push(w); } return out; };
   /** 줄바꿈을 ' / '로 (Jev 요청 · 기억 줄은 한 줄이어야 뒤죽박죽이 안 된다) */
@@ -2749,9 +2788,10 @@ Keep the in-story calendar consistent: move the date and time forward only as th
           }
           if (words.length) { q[`gx${n}`] = { type: 'choice', instructions: `P${n} what`, criteria: opt(words, 'x') }; q[`gh${n}`] = { type: 'choice', instructions: `P${n} how`, criteria: opt(words, 'x') }; }
           q[`gy${n}`] = { type: 'choice', instructions: `P${n} why`, criteria: { ...opt(whys.map((_, k) => `W${n}.${k}`), 'y'), self: 'the piece itself' } };
+          if (wikiOn()) { q[`gi${n}`] = { type: 'score', instructions: `P${n} weight`, criteria: MEM_WEIGHT }; q[`gv${n}`] = { type: 'choice', instructions: `P${n} verb`, criteria: MEM_VERB_OPTS }; }
           return { names, words, whys };
         });
-        const state = `${MEM_TAG_GUIDE}\n\n${part.map((it, n) => `[P${n}] speaker: ${it.speaker}\ncontext: ${clip(flat(it.before), 220)}\npiece: ${clip(flat(it.text), 520)}${meta[n].whys.length ? '\n' : ''}${meta[n].whys.map((x, k) => `W${n}.${k}: ${clip(x, 110)}`).join('\n')}`).join('\n\n')}`;
+        const state = `${MEM_TAG_GUIDE}${wikiOn() ? MEM_TAG_GUIDE_X : ''}\n\n${part.map((it, n) => `[P${n}] speaker: ${it.speaker}\ncontext: ${clip(flat(it.before), 220)}\npiece: ${clip(flat(it.text), 520)}${meta[n].whys.length ? '\n' : ''}${meta[n].whys.map((x, k) => `W${n}.${k}: ${clip(x, 110)}`).join('\n')}`).join('\n\n')}`;
         let a = null;
         try { a = await callJev(state, q); } catch (error) { setError('기억 꼬리표', error); }
         if (!a) continue;
@@ -2772,6 +2812,9 @@ Keep the in-story calendar consistent: move the date and time forward only as th
           if (h && h !== x) tg.h = h;
           if (why) tg.y = clip(why, 90);
           if (kind === 'secret') { const f = nm('gf'); if (f && f !== who) tg.f = f; }
+          if (a[`gi${n}`]) tg.i = Math.round(Math.max(0, Math.min(3, memScore(a[`gi${n}`]))) * 10) / 10;
+          const vb = top(a[`gv${n}`]);
+          if (vb && MEM_VERBS[vb]) tg.v = vb;
           out[s + n] = tg;
         });
       }
@@ -2895,6 +2938,7 @@ Keep the in-story calendar consistent: move the date and time forward only as th
     [/(지난\s?주|저번\s?주)/g, (d) => weekOf(addDays(d, -7))], [/(다음\s?주)/g, (d) => weekOf(addDays(d, 7))],
     [/(지난\s?달|저번\s?달)/g, (d) => monthOf(d, -1)], [/(다음\s?달)/g, (d) => monthOf(d, 1)],
     [/(작년|지난\s?해)/g, (d) => `${d.getUTCFullYear() - 1}`], [/(내년)/g, (d) => `${d.getUTCFullYear() + 1}`],
+    [/(이번\s?달)/g, (d) => monthOf(d, 0)], [/(올해)/g, (d) => `${d.getUTCFullYear()}`], [/(이번\s?주)(?!말)/g, (d) => weekOf(d)],
     [/(?:지난|저번)\s?([월화수목금토일])요일/g, (d, m) => isoD(addDays(d, -(((d.getUTCDay() - KO_DOW[m[1]] + 7) % 7) || 7)))],
     [/(\d+)\s?일\s?전/g, (d, m) => isoD(addDays(d, -m[1]))], [/(\d+|한|두|세|네)\s?주\s?전/g, (d, m) => weekOf(addDays(d, -7 * (KO_N[m[1]] ?? +m[1])))],
     [/(\d+|한|두|세|네)\s?달\s?전/g, (d, m) => monthOf(d, -(KO_N[m[1]] ?? +m[1]))], [/(\d+)\s?년\s?전/g, (d, m) => `${d.getUTCFullYear() - m[1]}`],
@@ -3023,15 +3067,25 @@ Keep the in-story calendar consistent: move the date and time forward only as th
   }
   const NEED_Q = 'Which keyword should be searched next to find an earlier record that is still missing for replying to the latest message? none if the records above already cover it.';
   /** Jev 심사: 후보마다 0~3 (+ 첫 갈래에는 더 찾을 낱말). nq = 머리에 붙은 질문 카드 수 (그 질문의 답이어도 3점) */
-  async function judgeMem(head, list, kws, nq = 0) {
+  // 꼭 지킬 것: 점수와 따로, "이 중에 다음 답장이 어기면 안 되는 기록"을 하나 고르게 한다 (서로 견줘 고르는 쪽이 덜 흔들린다).
+  //  보기마다 확률이 같이 오므로 높은 순으로 몇 개를 쓴다. 없으면 none
+  const KEEP_Q = 'Which one record Cn states something the next reply must follow and must not contradict: a current fact, rule, promise, secret, or state that the latest message directly runs into? none if no record does.';
+  const KEEP_P = 0.2, KEEP_MAX = 3;
+  async function judgeMem(head, list, kws, nq = 0, keep = false) {
     const q = {};
     list.forEach((f, i) => { q[`r${i}`] = { type: 'score', instructions: `C${i}`, criteria: RANK }; });
+    if (keep && list.length) q.keep = { type: 'choice', instructions: KEEP_Q, criteria: { ...Object.fromEntries(list.map((f, i) => [`c${i}`, `C${i}`])), none: 'none of them' } };
     if (kws?.length) q.need = { type: 'choice', instructions: NEED_Q, criteria: Object.fromEntries([...kws.map((w, k) => [`k${k}`, w]), ['none', 'nothing is missing']]) };
     const state = `${head}\n\n[EARLIER RECORDS] For each Cn question, score how useful that record is for writing the next reply to the latest message: 0 unrelated, 1 background only, 2 useful context, 3 answers or explains it${nq ? ' or answers one of the Q questions above' : ''}. old→#N marks a record that a later message updated.\n${list.map((f, i) => `C${i}: ${clip(memLine(f, new Set(), true), 420)}`).join('\n')}`;
     const a = await callJev(state, q);
     let need = null;
     if (a.need) { const pr = Object.entries(a.need.probabilities ?? {}).sort((x, y) => y[1] - x[1])[0]; const ch = a.need.choice ?? pr?.[0]; if (ch && ch !== 'none' && (!pr || pr[1] >= 0.4)) need = kws[+ch.slice(1)] ?? null; }
-    return { sc: new Map(list.map((f, i) => [f.id, memScore(a[`r${i}`])])), need };
+    const kp = new Map();
+    if (a.keep) {
+      const pr = a.keep.probabilities && Object.keys(a.keep.probabilities).length ? a.keep.probabilities : (a.keep.choice ? { [a.keep.choice]: 1 } : {});
+      for (const [k, p] of Object.entries(pr)) { const m = /^c(\d+)$/.exec(k); if (m && list[+m[1]] && p >= KEEP_P) kp.set(list[+m[1]].id, p); }
+    }
+    return { sc: new Map(list.map((f, i) => [f.id, memScore(a[`r${i}`])])), need, keep: kp };
   }
   /** 기억 한 줄: #번호 [약속/비밀] 누가+누구랑→누구에게 ∵왜 ⊘모르게: 원문 (원문에 이미 있는 이름 · 이유는 뺀다) */
   function memLine(f, castSet, forJudge = false) {
@@ -3122,6 +3176,8 @@ Keep the in-story calendar consistent: move the date and time forward only as th
     }
     return { lines: lines.slice(0, 10), ko };
   }
+  const HOP_SEEDS = 4, HOP_MAX = 20;
+  const KEEP_HEAD = 'Keep in the next reply (stated earlier, still true; do not contradict):';
   const MEM_LEGEND = 'Past pieces in original wording, oldest first. #=message no. A+B=together, →X=to/for X, ∵=reason, ⊘X=X must not know, old→#N=updated later, (=…)=real date.';
 
   /**
@@ -3200,18 +3256,27 @@ Keep the in-story calendar consistent: move the date and time forward only as th
     for (const v of qcv) if (v) addList(pool.filter(f => f.vec && !f.ask).map(f => [f.id, simSigns(v, f.vec)]).sort((a, b) => b[1] - a[1]).slice(0, 20).map(x => x[0]), 0.8);
     addList(pool.slice(-2).reverse().map(f => f.id), 0.5);
     addList([...tmp.keys()].reverse());
-    const first = [...rrf].sort((a, b) => b[1] - a[1]).slice(0, 60).map(([id]) => get(id));
+    // 후보: 섞은 순위(RRF) 위에서부터. 뜻 순위 상위(후보 수의 40%)는 섞다가 밀려났어도 꼭 넣는다
+    //  (LoCoMo에서 빠진 근거 57개 중 50개가 Jev에게 가 보지도 못했다. Jev가 근거를 버린 건 5개뿐.
+    //   후보 60 → 100: 근거를 다 넣은 문제 186 → 194, Jev 호출 +2. 뜻 순위 보장(semKeep)은 재 보니 차이가 없어서 기본 꺼짐)
+    const CN = cfg.wide === true ? Math.max(100, clampNum(cfg.memCands, 60, 20, 200)) : clampNum(cfg.memCands, 60, 20, 200);
+    const rrfIds = [...rrf].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+    const inTop = new Set(rrfIds.slice(0, CN));
+    const must = cfg.semKeep !== true ? [] : [...sem].sort((a, b) => b[1] - a[1]).slice(0, Math.round(CN * 0.4)).map(([id]) => id).filter(id => !inTop.has(id));
+    const first = [...rrfIds.slice(0, CN - must.length), ...must].map(id => get(id));
     // ③ Jev 심사: 20개씩 동시에, 첫 갈래에 더 찾을 낱말
     const head = `[RECENT STORY]\n${clip(ctx, 1200)}\n\n[USER]\n${clip(latest, 1500)}${qs.length ? `\n\n[THE NEXT REPLY MAY NEED]\n${qs.map((x, i) => `Q${i + 1}: ${x.text}`).join('\n')}` : ''}`;
     const scores = new Map();
+    let hopN = 0;
+    const keepP = new Map();
     let need = null;
     if (first.length) {
       const groups = [];
       for (let i = 0; i < first.length; i += 20) groups.push(first.slice(i, i + 20));
       const kws = needWords(first.slice(0, 20), latest);
       try {
-        const rs = await timed(tr, 'Jev 심사', () => Promise.all(groups.map((g, gi) => judgeMem(head, g, gi === 0 ? kws : null, qs.length))), () => `후보 ${first.length}개`);
-        for (const r of rs) { for (const [id, s] of r.sc) scores.set(id, s); need ??= r.need; }
+        const rs = await timed(tr, 'Jev 심사', () => Promise.all(groups.map((g, gi) => judgeMem(head, g, gi === 0 ? kws : null, qs.length, cfg.keep === true))), () => `후보 ${first.length}개`);
+        for (const r of rs) { for (const [id, s] of r.sc) scores.set(id, s); need ??= r.need; for (const [id, p] of r.keep ?? []) keepP.set(id, p); }
       } catch (error) {
         setError('Jev 심사', error);
         jevOk = false;
@@ -3231,6 +3296,35 @@ Keep the in-story calendar consistent: move the date and time forward only as th
         } catch (error) { setError('다시 찾기', error); }
       }
     }
+    // 이어 찾기 (2.2): 찾은 기억(2점 이상)에서 줄을 따라간다 — 뜻이 가까운 것 · 같은 인물 · 이유 문장이 든 조각.
+    //  질문 하나에 기억 여러 개가 필요할 때, 첫 검색은 그중 일부만 찾는다 (LoCoMo 여러 기억 문제: 근거를 다 넣은 게 43개 중 14개).
+    //  첫 후보에 없던 것만 모아, 찾은 기억을 같이 보여 주고 Jev가 한 번 더 심사한다. 호출 1번, 기기 계산은 비트 세기라 가볍다
+    if (cfg.hop !== false && jevOk && first.length) {
+      const hits = [...scores].filter(([, s]) => s >= 2).sort((a, b) => b[1] - a[1]).slice(0, HOP_SEEDS).map(([id]) => get(id)).filter(f => f?.vec);
+      if (hits.length) {
+        try {
+          const seen = new Set(scores.keys());
+          const r3 = new Map();
+          const add3 = (ids, w = 1) => ids.forEach((id, r) => r3.set(id, (r3.get(id) ?? 0) + w / (60 + r)));
+          const cands = pool.filter(f => f.vec && !f.ask && f.kind !== 'talk' && !seen.has(f.id));
+          for (const h of hits) {
+            const hb = bitsOf(h.vec), n = h.vec.length;
+            const sim = cands.map(f => [f, f.vec.length === n ? cosBits(hb, bitsOf(f.vec), n) : -1]);
+            add3(sim.slice().sort((a, b) => b[1] - a[1]).slice(0, 8).map(x => x[0].id));
+            const names = new Set([h.tag?.w, h.tag?.c, h.tag?.m].filter(Boolean));
+            if (names.size) add3(sim.filter(([f]) => [f.tag?.w, f.tag?.c, f.tag?.m].some(x => names.has(x))).sort((a, b) => b[1] - a[1]).slice(0, 8).map(x => x[0].id));
+            if (h.tag?.y) { const key = h.tag.y.replace(/…$/, '').slice(0, 40); const c = cands.find(f => Math.abs(f.mi - h.mi) <= 2 && f.sent.includes(key)); if (c) add3([c.id], 2); }
+          }
+          const more = [...r3].sort((a, b) => b[1] - a[1]).slice(0, HOP_MAX).map(([id]) => get(id));
+          if (more.length) {
+            const found = hits.map((f, i) => `F${i}: ${clip(flat(memLine(f, castSet, true)), 220)}`).join('\n');
+            const r = await timed(tr, '이어 찾기', () => judgeMem(`${head}\n\n[ALREADY FOUND]\n${found}\n(the records below may complete, explain, or continue the records already found)`, more, null, qs.length), () => `씨앗 ${hits.length}개 → ${more.length}개`);
+            for (const [id, s] of r.sc) scores.set(id, s);
+            hopN = more.length;
+          }
+        } catch (error) { setError('이어 찾기', error); }
+      }
+    }
     // 바뀐 옛 기억을 고르면 바꾼 새 기억도 같이
     for (const [id, s] of [...scores]) {
       const o = get(id)?.tag?.o;
@@ -3248,9 +3342,20 @@ Keep the in-story calendar consistent: move the date and time forward only as th
       clk.d || clk.t || clk.place ? `Now: ${[clk.d, clk.t].filter(Boolean).join(' ')}${clk.place ? ` · ${clk.place}` : ''}` : '',
       cast.length ? `In this scene: ${cast.join(', ')}` : '',
       ...scene.lines,
+      ...(cfg.wikiInject ? wikiLines(cast, limitMi) : []),
     ].filter(Boolean);
     const dLine = hint ? directorLine(hint) : '';
-    let used = estimateTokens(`[Memory]\n${headLines.join('\n')}\n${MEM_LEGEND}\n${dLine}\n[/Memory]`) + 4;
+    const keepFacts = [];
+    for (const [id, p] of [...keepP].sort((a, b) => b[1] - a[1])) {
+      let f = get(id);
+      if (!f || (scores.get(id) ?? 0) < 1.5) continue;
+      const o = f.tag?.o;
+      if (o) { const nw = factAt(o[0], o[1]); if (nw && nw.mi < limitMi) f = nw; }
+      if (!keepFacts.includes(f)) keepFacts.push(f);
+      if (keepFacts.length >= KEEP_MAX) break;
+    }
+    const keepLines = keepFacts.length ? [KEEP_HEAD, ...keepFacts.map(f => `· #${f.mi + 1} "${clip(keySent(f), 120)}"`)] : [];
+    let used = estimateTokens(`[Memory]\n${headLines.join('\n')}\n${MEM_LEGEND}\n${dLine}\n${keepLines.join('\n')}\n[/Memory]`) + 4;
     const pick = new Set();
     const poolIdx = new Map(pool.map((f, i) => [f.id, i]));
     const tryAdd = (id) => { if (id == null || pick.has(id) || !poolIdx.has(id)) return; const c = estimateTokens(memLine(get(id), castSet)) + 3; if (used + c > budget) return; pick.add(id); used += c; };
@@ -3269,13 +3374,15 @@ Keep the in-story calendar consistent: move the date and time forward only as th
       if (hd && hd !== lastHd) { lines.push(`— ${hd}`); lastHd = hd; }
       lines.push(memLine(f, castSet));
     }
-    const body = [...headLines, ...(lines.length ? [MEM_LEGEND, ...lines] : []), ...(dLine ? [dLine] : [])];
+    const body = [...headLines, ...(lines.length ? [MEM_LEGEND, ...lines] : []), ...(dLine ? [dLine] : []), ...keepLines];
     const block = body.length ? `[Memory]\n${body.join('\n')}\n[/Memory]` : '';
     const why = (f) => (pinned.has(f.id) ? 'pin' : f.fresh ? 'tail' : (scores.get(f.id) ?? 0) >= 0.8 ? 'pick' : 'near');
+    // 벤치 진단용 (평소엔 아무 일도 안 한다): 후보 · 점수 · 넣은 것
+    globalThis.__JA_DIAG?.({ semOrder: [...sem].sort((a, b) => b[1] - a[1]).map(([id]) => get(id)?.sent ?? ''), rrfOrder: [...rrf].sort((a, b) => b[1] - a[1]).map(([id]) => get(id)?.sent ?? ''), pool: pool.map(f => f.sent), first: first.map(f => f.sent), scored: [...scores].map(([id, sc]) => [get(id)?.sent ?? '', Math.round(sc * 100) / 100]), picked: picked.map(f => f.sent), budget, used });
     return {
       block, picked,
       trace: {
-        cands: first.length, kept: picked.length, need: need ?? 'none', jevOk, present: cast, cast, hint, qcards: qs,
+        cands: first.length, hop: hopN, kept: picked.length, need: need ?? 'none', jevOk, present: cast, cast, hint, qcards: qs,
         storyKo: [...(cast.length ? [{ t: `이번 인물 · ${cast.join(', ')}`, c: 'ac' }] : []), ...(qs.length ? [{ t: `질문 카드 · ${qs.map(x => `${x.via === 'dir' ? '🔗' : ''}${x.name}`).join(' · ')}`, c: '' }] : []), ...scene.ko],
         items: picked.map(f => ({ id: f.id, ck: `${f.key}:${f.pos}`, mi: f.mi, lv: Math.round((scores.get(f.id) ?? 0) * 100) / 100, why: why(f), text: f.sent, fact: f.k ? { k: f.k, slots: f.slots } : null })),
         levels: ranked.slice(0, 40).map(([id, lv]) => ({ id, lv: Math.round(lv * 100) / 100, text: clip(get(id)?.sent ?? '', 140), mi: (get(id)?.mi ?? 0) + 1 })),
@@ -3332,6 +3439,176 @@ Keep the in-story calendar consistent: move the date and time forward only as th
       loreKeysForNext = keys;
       return keys.length ? `${clean}\n<jev-lore> ${keys.join(' ')} </jev-lore>` : clean;
     } catch (error) { setError('인물 로어북 켜기', error); return text; }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  //  노드 · 인물 위키 (2.1): 기억 꼬리표를 장면으로 묶고, 인물마다 한 장으로 모은다
+  // ═════════════════════════════════════════════════════════════
+  //  · 따로 저장하지 않는다. 기억 꼬리표(memStore)와 상태창(memClock)에서 그때그때 만든다 (facts가 바뀌면 다시)
+  //  · 새 문장은 쓰지 않는다. 한 줄 = 꼬리표의 이름 + 사람이 써 둔 동사(MEM_VERBS) + 원문 낱말, 그리고 원문 대사
+  //  · 장면: 상태창의 날짜 · 장소가 바뀌면 새 장면 (길어도 30메시지). 상태창이 없으면 12메시지씩
+  //  · 넣기(설정 wikiInject, 기본 꺼짐): 이번 턴 인물의 위키 한 줄씩 + 창 바로 앞 장면 두 개
+  const SCENE_MAX = 30, SCENE_BLIND = 12;
+  const WIKI_KEEP = 2;   // 중요도 2 이상만 장면 대표 · 위키에 (진짜 Jev: 핵심 문장은 2.5 안팎, 풍경 · 잡담은 1 안팎)
+  const impOf = (f) => (Number.isFinite(f.tag?.i) ? f.tag.i : f.kind === 'talk' ? 0 : f.kind === 'promise' || f.kind === 'secret' ? 2.5 : 2);
+  const QUOTE_RE = /["“「『]([^"”」』\n]{4,160})["”」』]/u;
+  const quoteOf = (text) => { const m = QUOTE_RE.exec(String(text ?? '')); return m ? m[1].trim() : ''; };
+
+  /** 2.1 전에 만든 기억: 중요도가 아직 없는 조각 */
+  function wikiBacklog() { return wikiOn() ? facts.filter(f => f.tag && !Number.isFinite(f.tag.i)) : []; }
+  /** 중요도 · 동사만 따로 묻는다 (예전 기억 올리기). 한 번에 12조각 */
+  async function tagExtras(list, onProgress) {
+    const room = chatKey;
+    const lanes = Math.max(1, settings.jevParallel ?? 2);
+    const starts = [];
+    for (let i = 0; i < list.length; i += 12) starts.push(i);
+    let next = 0, done = 0;
+    const top = (r) => { if (!r) return null; const pr = Object.entries(r.probabilities ?? {}).sort((x, y) => y[1] - x[1])[0]; const ch = r.choice ?? pr?.[0]; return !ch || ch === 'none' || (pr && pr[1] < 0.4) ? null : ch; };
+    async function lane() {
+      while (next < starts.length && chatKey === room) {
+        const part = list.slice(starts[next], starts[next++] + 12);
+        const q = {};
+        part.forEach((f, n) => { q[`gi${n}`] = { type: 'score', instructions: `P${n} weight`, criteria: MEM_WEIGHT }; q[`gv${n}`] = { type: 'choice', instructions: `P${n} verb`, criteria: MEM_VERB_OPTS }; });
+        const state = `[TAGS] Each Pn is one piece of a chat, written by the speaker shown. Answer about the piece itself:${MEM_TAG_GUIDE_X}\n\n${part.map((f, n) => `[P${n}] speaker: ${whoOf(f.mi)}${f.tag.w ? `\nwho: ${f.tag.w}` : ''}\npiece: ${clip(flat(f.sent), 520)}`).join('\n\n')}`;
+        let a = null;
+        try { a = await callJev(state, q); } catch (error) { setError('중요도 · 동사', error); }
+        if (a && chatKey === room) part.forEach((f, n) => {
+          if (!a[`gi${n}`]) return;
+          f.tag.i = Math.round(Math.max(0, Math.min(3, memScore(a[`gi${n}`]))) * 10) / 10;
+          const vb = top(a[`gv${n}`]);
+          if (vb && MEM_VERBS[vb]) f.tag.v = vb;
+          memDirty.add(shardOf(f.key));
+        });
+        done += part.length;
+        onProgress?.(done, list.length);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(lanes, starts.length)) }, lane));
+    if (chatKey !== room) return 0;
+    sceneMemo = { facts: null, list: null, seq: null };
+    saveMem();
+    return done;
+  }
+
+  // 조각은 문장 여러 개라서, 그중 꼬리표가 가리키는 문장을 대표로 고른다 (기기에서, Jev 안 씀).
+  //  동사에 맞는 말이 있는 문장 > 누가 · 누구에게 이름이 있는 문장 > 대사 > 첫 문장
+  const VERB_CUE = {
+    promise: /약속|기로 했|하기로|할게|줄게/, confess: /고백|좋아해|사랑해/, reveal: /사실은|털어놓|밝혔|알려 ?[줬주]|말해 ?[줬주]|란다/, hide: /숨기|숨겼|몰래|비밀/,
+    learn: /알게|깨달|눈치|알아냈|알아챘/, lie: /거짓말|속였|속이/, ask: /부탁|해 ?줘|달라고|주세요|줄래/, refuse: /거절|싫다고|안 된다|안 돼/, accept: /받아들|알았어|그러자|좋아[.!"”]/,
+    give: /주었|줬다|건넸|쥐여|선물/, get: /받았|얻었|손에 넣/, lose: /잃|놓쳤|사라졌/, find: /찾았|찾아냈|발견/,
+    meet: /만났|마주쳤|처음 뵙|소개/, part: /헤어|작별|잘 가/, arrive: /도착|들어섰|다다랐/, leave: /떠났|떠나|나갔/,
+    fight: /싸웠|다퉜|말다툼|배틀/, makeup: /화해/, help: /도왔|도와|구해|지켜/, harm: /때렸|공격|다치게/, injured: /다쳤|아팠|상처|삐었|부상/, heal: /나았|회복|치료|붕대/,
+    comfort: /위로|달래|안아/, angry: /화를|화냈|화가|소리쳤/, sorry: /미안|사과|죄송/, thank: /고마|감사/, touch: /손을 잡|안았|기대|쓰다듬/,
+    decide: /결심|하기로|마음먹/, plan: /계획|준비|예정/, make: /만들|완성|해냈|성공/, fail: /실패|실수|졌다/,
+    like: /좋아|사랑|즐겨/, dislike: /싫어|무서워|두려워|질색/, is: /이야|입니다|이에요|이란다|이래요?[.!"”]/, has: /가지고|갖고|가진/,
+  };
+  const keyMemo = new WeakMap();
+  function keySent(f) {
+    const t = f.tag ?? {};
+    let hit = keyMemo.get(t);
+    if (hit && hit.s === f.sent && hit.v === t.v) return hit.k;
+    const ss = memSents(f.sent);
+    const cue = VERB_CUE[t.v];
+    let best = ss[0] ?? flat(f.sent), top = -1;
+    ss.forEach((x, i) => {
+      const sc = (cue?.test(x) ? 4 : 0) + (t.w && x.includes(t.w) ? 0.5 : 0) + (t.m && x.includes(t.m) ? 0.5 : 0) + (t.x && x.includes(t.x) ? 1 : 0) + (/["“「『]/.test(x) ? 1 : 0) - i * 0.01;
+      if (sc > top) { top = sc; best = x; }
+    });
+    const k = unquote(flat(best));
+    keyMemo.set(t, { s: f.sent, v: t.v, k });
+    return k;
+  }
+  /** 한 줄: 누가(+누구랑) → 누구에게: 동사 "대표 문장" (대표 문장은 원문 그대로) */
+  function nodeLine(f, maxKey = 70) {
+    const t = f.tag ?? {};
+    const head = [`${t.w ?? ''}${t.c ? `+${t.c}` : ''}${t.m ? ` → ${t.m}` : ''}`, MEM_VERBS[t.v]?.[1] ?? ''].filter(Boolean).join(': ');
+    return `${head}${head ? ' ' : ''}"${clip(keySent(f), maxKey)}"`;
+  }
+
+  // ── 장면 ──
+  const peopleSig = () => Object.values(story.people ?? {}).map(p => p.name + (p.hidden ? 0 : 1) + (p.aliases?.length ?? 0)).join("|");
+  let sceneMemo = { facts: null, list: null, seq: null };
+  function scenesAll() {
+    if (sceneMemo.facts === facts && sceneMemo.list && sceneMemo.seq === peopleSig()) return sceneMemo.list;
+    const list = [];
+    let cur = null;
+    for (const f of facts) {
+      const c = memClock[f.mi] ?? {};
+      const d = c.d ?? '', place = c.place ?? '';
+      const clocked = !!(d || place || cur?.d || cur?.place);
+      const same = cur && (clocked ? d === cur.d && place === cur.place && f.mi - cur.first < SCENE_MAX : f.mi - cur.first < SCENE_BLIND);
+      if (!same) { cur = { id: list.length, d, t: c.t ?? '', place, first: f.mi, last: f.mi, items: [] }; list.push(cur); }
+      cur.last = f.mi;
+      cur.items.push(f);
+    }
+    // 인물 장부에 있는 사람만 (별명은 본이름으로). 장부를 안 쓰면 꼬리표 이름 그대로
+    const canon = new Map();
+    for (const p of Object.values(story.people ?? {})) if (!p.hidden) for (const n of nameForms(p)) canon.set(n, p.name);
+    for (const s of list) {
+      const cnt = new Map();
+      for (const f of s.items) for (const n0 of [f.tag.w, f.tag.c, f.tag.m]) { const n = canon.size ? canon.get(n0) : n0; if (n) cnt.set(n, (cnt.get(n) ?? 0) + 1); }
+      s.people = [...cnt].sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => x[0]);
+      const live = s.items.filter(f => f.kind !== 'talk' && !f.ask);
+      s.imp = live.reduce((m, f) => Math.max(m, impOf(f)), 0);
+      // 대표 조각: 중요도 2 이상("나중에 중요")을 높은 순으로 3개까지, 그다음 이야기 순서대로
+      s.top = live.filter(f => impOf(f) >= WIKI_KEEP).sort((a, b) => impOf(b) - impOf(a) || a.mi - b.mi || a.pos - b.pos).slice(0, 3).sort((a, b) => a.mi - b.mi || a.pos - b.pos);
+    }
+    sceneMemo = { facts, list, seq: peopleSig() };
+    return list;
+  }
+  const sceneLabel = (s) => [s.d, s.place].filter(Boolean).join(' · ') || `#${s.first + 1}`;
+  /** 장면 노드 글: [날짜 · 장소 · 인물] 누가 → 누구에게: 동사 "대표 문장"; … (중요한 순으로 maxLines개) */
+  function sceneNodeText(s, maxLines = 3, maxKey = 70) {
+    const pick = new Set([...s.top].sort((a, b) => impOf(b) - impOf(a)).slice(0, maxLines));
+    const lines = [...new Set(s.top.filter(f => pick.has(f)).map(f => nodeLine(f, maxKey)))];
+    return `[${[sceneLabel(s), s.people.join(', ')].filter(Boolean).join(' · ')}] ${lines.join('; ')}`;
+  }
+
+  // ── 인물 위키 ──
+  /** 뜻이 거의 같은 줄은 새 것만 남긴다 (임베딩 부호 벡터, Jev 안 씀) */
+  function wikiDedupe(list, max = 8) {
+    const out = [];
+    // 저사양 기기: 최근 200줄까지만 견준다
+    for (const f of [...list].sort((a, b) => b.mi - a.mi || b.pos - a.pos).slice(0, 200)) {
+      if (f.vec && out.some(o => o.vec && o.vec.length === f.vec.length && cosBits(bitsOf(o.vec), bitsOf(f.vec), f.vec.length) > 0.86)) continue;
+      out.push(f);
+    }
+    return out.sort((a, b) => impOf(b) - impOf(a) || b.mi - a.mi).slice(0, max);
+  }
+  /** 인물 한 장: 지금 상태 · 전에는 · 약속 · 비밀 · 들은 것 · 모르는 것 · 겪은 장면 */
+  function personWiki(name, limitMi = Infinity) {
+    const forms = nameForms(story.people[name] ?? { name, aliases: [] });
+    const is = (x) => !!x && forms.includes(x);
+    const state = [], was = [], promises = [], secrets = [], heard = [], blind = [];
+    for (const f of facts) {
+      if (f.mi >= limitMi) break;
+      if (f.kind === 'talk' || f.ask) continue;
+      const t = f.tag;
+      if (f.kind === 'fact' && is(t.w)) (t.o ? was : state).push(f);
+      else if (f.kind === 'promise' && (is(t.w) || is(t.m)) && (story.memThreads?.[factKey(f)] ?? 'open') === 'open') promises.push(f);
+      else if (f.kind === 'secret' && is(t.w)) secrets.push(f);
+      if (f.kind === 'secret' && is(t.f)) blind.push(f);
+      else if ((f.kind === 'fact' || f.kind === 'secret') && is(t.m) && !is(t.w)) heard.push(f);
+    }
+    const scenes = scenesAll().filter(s => s.first < limitMi && s.top.length && s.people.some(is));
+    return { state: wikiDedupe(state.filter(f => impOf(f) >= WIKI_KEEP)), was: was.slice(-4), promises: promises.slice(-4), secrets: secrets.slice(-4), heard: wikiDedupe(heard.filter(f => impOf(f) >= WIKI_KEEP), 4), blind: blind.slice(-4), scenes };
+  }
+  const wikiQuote = (f, n = 46) => `"${clip(keySent(f), n)}" #${f.mi + 1}`;
+  /** 넣을 글: 인물마다 한 줄 (지금 상태 3 · 들은 것 1 · 모르는 것 1). 약속 · 비밀은 관계 줄(Rel)에 이미 있어서 뺀다 */
+  function wikiLines(cast, limitMi = Infinity) {
+    const lines = [];
+    for (const n of cast) {
+      const w = personWiki(n, limitMi);
+      const bits = [];
+      if (w.state.length) bits.push(w.state.slice(0, 2).map(f => wikiQuote(f)).join(' / '));
+      if (w.heard.length) bits.push(`was told ${wikiQuote(w.heard[0], 40)}`);
+      if (w.blind.length) bits.push(`doesn't know ${wikiQuote(w.blind[w.blind.length - 1], 40)}`);
+      if (bits.length) lines.push(`Wiki ${n}: ${bits.join(' · ')}`);
+    }
+    // 창 바로 앞 장면 두 개 (직전 줄거리)
+    const recent = scenesAll().filter(s => s.last < limitMi && s.top.length && s.imp >= 2).slice(-2);
+    for (const s of recent) lines.push(`Scene ${sceneNodeText(s, 2, 60)}`);
+    return lines;
   }
 
   function inject(messages, block) {
@@ -4641,6 +4918,22 @@ details.more.danger summary{color:var(--tx2)}
     const label = (m) => [m.d ? clockLabel({ d: m.d }) : '', m.place].filter(Boolean).join(' · ') || `#${m.first + 1}`;
     return `<details class="more" style="margin:6px 0 0;padding:0;border:0"><summary class="xs dim">만남 기록 ${ms.length}번 · 처음 ${escapeHtml(label(ms[0]))}</summary><div class="list">${ms.slice().reverse().slice(0, 40).map((m, i) => `<button class="item" data-act="chunk" data-ck="${escapeHtml(`${m.pick.key}:${m.pick.pos}`)}" style="align-items:flex-start;padding:6px 0"><div class="t"><b class="xs">${escapeHtml(label(m))}${i === ms.length - 1 || ms.length === 1 ? ' <span class="tag">처음</span>' : ''}</b><span class="xs dim">${escapeHtml(clip(meetLine(m), 70))}</span></div></button>`).join('')}</div></details>`;
   }
+  /** 인물 위키: 기억 꼬리표에서 모은 것. 줄을 누르면 원문 */
+  function wikiSection(name) {
+    if (settings.wiki === false) return '';
+    const w = personWiki(name);
+    const sec = (title, help, list) => (list.length ? `<div class="xs dim" style="margin:10px 0 2px"><b>${title}</b>${help ? ` · ${help}` : ''}</div><div class="list">${list.map(f => factItem(f)).join('')}</div>` : '');
+    const scenes = w.scenes.slice(-12).reverse();
+    const body = [
+      sec('지금', '', w.state),
+      sec('전에는', '나중에 바뀐 것', w.was),
+      sec('들은 것', '다른 사람이 말해 준 것', w.heard),
+      sec('모르는 것', '이 사람 모르게 하는 비밀', w.blind),
+      scenes.length ? `<div class="xs dim" style="margin:10px 0 2px"><b>겪은 장면</b> · ${w.scenes.length}개</div><div class="list">${scenes.map(s => `<button class="item" data-act="chunk" data-ck="${escapeHtml(`${s.top[0].key}:${s.top[0].pos}`)}" style="align-items:flex-start;padding:6px 0"><div class="t"><b class="xs">${escapeHtml(sceneLabel(s))}${s.people.length ? ` <span class="dim" style="font-weight:400">${escapeHtml(s.people.join(', '))}</span>` : ''}</b>${s.top.map(f => `<span class="xs">${escapeHtml(nodeLine(f, 90))}</span>`).join('')}</div></button>`).join('')}</div>` : '',
+    ].join('');
+    const left = wikiBacklog().length;
+    return `<div class="sec">위키 <span class="dim xs" style="font-weight:400">기억에서 모은 것 · 눌러서 원문${left ? ` · 예전 기억 ${left}조각 정리 중` : ''}</span></div>${body || '<div class="small dim">아직 모인 게 없어요. 이 사람이 한 일이 기억으로 정리되면 여기에 모여요.</div>'}`;
+  }
   function personSheet(name) {
     const p = story.people[name];
     if (!p) return '<div class="empty">인물을 찾을 수 없어요.</div>';
@@ -4654,6 +4947,7 @@ details.more.danger summary{color:var(--tx2)}
     return `<div class="sh">${avatar(name, 'lg')}<div class="t"><h3>${pname(name)}</h3><div class="small muted">${p.kind === 'char' ? '캐릭터 · ' : p.kind === 'persona' ? '나 · ' : ''}${p.count}번 등장${p.first != null ? ` · 처음 #${p.first + 1} · 최근 #${(p.last ?? p.first) + 1}` : ''}</div>${p.aliases.length ? `<div class="tagchips" style="margin-top:6px">${p.aliases.map(a => `<span class="tchip"><span style="padding:3px 4px 3px 10px">${escapeHtml(a)}</span><button class="x" data-act="alias-split" data-name="${escapeHtml(name)}" data-a="${escapeHtml(a)}" aria-label="${escapeHtml(a)} 떼어 내기" title="떼어 내기 (잘못 합쳤으면)">×</button></span>`).join('')}</div>` : ''}</div><button class="iconbtn" data-act="sheet-close" aria-label="닫기">${icon('close')}</button></div>
       ${titleWarn}
       ${(() => { const { all } = topTags(name, 0, 0); return settings.tags !== false && all.length ? `<div class="sec">태그 <span class="dim xs" style="font-weight:400">눌러서 원문 · × 로 지우기</span></div><div class="tagchips">${all.slice(0, 16).map(([w, t]) => `<span class="tchip ${t.s > 0 ? 'pos' : 'neg'}"><button data-act="chunk" data-ck="${escapeHtml(t.ck ?? '')}" title="${escapeHtml(t.q ?? '')}">${t.s > 0 ? '💚' : '💔'} ${escapeHtml(w)} <b>${Math.abs(t.s)}</b></button><button class="x" data-act="tag-del" data-name="${escapeHtml(name)}" data-w="${escapeHtml(w)}" aria-label="지우기">×</button></span>`).join('')}</div>` : ''; })()}
+      ${wikiSection(name)}
       <div class="sec">관계</div>
       ${rels.length ? rels.map(r => { const o = r.a === name ? r.b : r.a; const w = Math.abs(r.aff) * 5; return `<div class="relrow">${avatar(o, 'sm')}<div style="flex:1;min-width:0"><div class="row" style="justify-content:space-between"><b class="small">${pname(o)}</b><select class="sel" style="width:auto;min-height:32px;padding:2px 8px;font-size:12.5px" data-act="reltype" data-a="${escapeHtml(r.a)}" data-b="${escapeHtml(r.b)}"><option value="">${r.co}번 함께</option>${REL_GROUPS.map(([g, ks]) => `<optgroup label="${g}">${ks.map(k => `<option value="${k}"${r.type === k ? ' selected' : ''}>${REL_TYPES[k]}</option>`).join('')}</optgroup>`).join('')}</select><button class="btn sm g" style="margin-left:6px" data-act="relmerge" data-from="${escapeHtml(o)}" data-into="${escapeHtml(name)}" title="같은 사람이면 합치기">합치기</button></div>
           ${relDir(r.type) ? `<div class="mbar" style="margin-top:6px"><span class="lb2">누가 ${relDir(r.type)[0]}?</span>${[r.a, r.b].map(n => `<button class="chip${r.who === n ? ' on' : ''}" data-act="relwho" data-a="${escapeHtml(r.a)}" data-b="${escapeHtml(r.b)}" data-who="${escapeHtml(n)}">${pname(n)}</button>`).join('')}</div>` : ''}
@@ -4810,6 +5104,11 @@ details.more.danger summary{color:var(--tx2)}
         <div class="field inline"><div><label>채팅 화면 바로가기</label><div class="help">채팅 화면에 버튼을 띄워요.</div></div>${sw('showButton', d.showButton)}</div>
         <div class="field inline"><div><label>인물 로어북 켜기</label><div class="help">리스 로어북은 채팅 메시지에서만 트리거를 찾아요. 이걸 켜면 보낼 때 이번 턴에 나올 인물(바로 전 답장 때 Jev가 고른 인물 + 내 말 · 바로 전 메시지에 나온 이름)의 이름 · 별명이 키인 로어북을 켜요. 인물이 잘 안 바뀌어서 켜지는 로어북도 잘 안 바뀌어요 (캐시에 좋아요). 표시는 화면과 메인 모델에서 빼요.</div></div>${sw('loreTrig', d.loreTrig !== false)}</div>
         <div class="field inline"><div><label>바뀐 정보 표시</label><div class="help">새 기억이 생기면 뜻이 비슷한 옛 기억을 찾아 Jev가 "새 것이 옛 것을 바꿨나"를 봐요 (장소 · 비밀번호 · 계획 · 코인 …). 바뀐 옛 기억을 넣을 땐 새 기억도 같이 넣고 "old→#번호"로 표시해요.</div></div>${sw('latest', d.latest !== false)}</div>
+        <div class="field inline"><div><label>인물 위키 · 장면 묶기</label><div class="help">기억 조각마다 중요도와 동사를 같이 골라 둬요 (꼬리표를 붙이는 Jev 호출에 질문 두 개가 더 붙어요). 인물 화면의 위키와 장면이 여기서 만들어져요. 예전 기억은 보낼 때마다 조금씩 채워요.</div></div>${sw('wiki', d.wiki !== false)}</div>
+        <div class="field inline"><div><label>꼭 지킬 것 올리기 <span class="tag">실험</span></label><div class="help">기억 글 맨 끝에 "이번 답장에서 어기면 안 되는 것"을 2~3줄 따로 올려요. Jev가 후보 중에서 고르고, 문장은 원문 그대로예요. 심사하는 Jev 호출에 질문 하나가 더 붙어요.</div></div>${sw('keep', d.keep === true)}</div>
+        <div class="field inline"><div><label>이어 찾기</label><div class="help">찾은 기억에서 뜻이 가깝거나 같은 인물 · 이유로 이어진 기억을 한 번 더 찾아요. 기억 여러 개가 같이 필요한 장면에서 빠지는 걸 줄여요. 보낼 때 Jev 호출이 1번 늘어요.</div></div>${sw('hop', d.hop !== false)}</div>
+        <div class="field inline"><div><label>넓게 찾기</label><div class="help">Jev에게 보여 주는 후보를 60개에서 100개로 늘려요. 필요한 기억이 빠지는 일이 줄지만, 보낼 때 Jev 호출이 2번쯤 늘어요. 기억 여러 개를 이어야 하는 장면이 많으면 켜 보세요.</div></div>${sw('wide', d.wide === true)}</div>
+        <div class="field inline"><div><label>위키를 기억에 넣기 <span class="tag">실험</span></label><div class="help">이번 턴 인물의 위키 한 줄씩과 바로 앞 장면 두 개를 기억 머리에 같이 넣어요. 아직 효과를 재지 않아서 기본은 꺼져 있어요. 기억 예산 안에서 자리를 먼저 써요.</div></div>${sw('wikiInject', d.wikiInject === true)}</div>
         <div class="field inline"><div><label>요청에서 새로 들어온 글 읽기</label><div class="help">지난 요청과 비교해 이번에 새로 들어온 글(이번에 켜진 로어북 등)을 기억 찾기 검색어로 쓰고, 거기 나온 인물을 장면 인물로 봐요. 캐릭터 설명처럼 매번 같은 글은 빼요.</div></div>${sw('reqRead', d.reqRead !== false)}</div>
         <div class="field inline"><div><label>작업 중 동그라미</label><div class="help">뒤에서 일하는 동안 채팅 화면 오른쪽 위에 도는 동그라미를 띄워요. <b style="color:#ef4444">빨강</b> 기억 저장 · <b style="color:#a855f7">보라</b> 이야기 정리. 누르면 이 화면이 열려요.</div></div>${sw('busySpin', d.busySpin)}</div>
         <div class="field"><label>Jev 가격 (100만 토큰당 달러)</label><div class="help">"지금" 탭의 예상 비용 계산에만 써요.</div><div class="row" style="gap:6px;margin-top:8px"><span class="dim">$</span><input class="inp" type="number" inputmode="decimal" step="any" min="0" data-field="jevPrice" value="${escapeHtml(d.jevPrice)}" style="max-width:110px"><button class="btn sm g" data-act="usage-reset">사용량 초기화</button></div></div>
@@ -5709,6 +6008,7 @@ details.more.danger summary{color:var(--tx2)}
       chunkText, overlapStart, chatEntries, toSigns, packSigns, unpackSigns, storageStats, recall, parseStatus, storyClock, clockLabel, peopleIn, mergePeople, hidePerson, togglePin, chunkByCk, searchMemory, searchFacts,
       renderNow, renderPeople, renderPromises, renderMemory, tagCandidates, tagNouns, addTag, topTags, backupToLore, readLoreBackup, applyBackup, currentChatObj, backupData, renderSettings, renderOnboard, graphSvg, personSheet, chunkSheet, presetOf,
       getSettings: () => settings, getStory: () => story, allDirCards, dirEligible, dirSheet, directorBox, DIR_PACKS, QCARD_PACKS, DIR_ASK, allQCards, qcQuestions, qcFrom, renderCards, renderQCards, presentCast, syncNameLineModule, NL_MODULE, NL_HIDE, NL_SCENE, getTimeline: () => timeline, getChunks: () => chunks, getCards: () => cardStore, getFacts: () => facts, graphData, busyIcon, getBusy: () => ({ ...busyN, shown: busyShown }), getMemStore: () => memStore, tagMessages, memBacklog, factBacklog, searchFacts, flushMem, clearMem, factItem, getLastRecall: () => lastRecall, getLastRescue: () => lastRescue, previewRecall, previewTail, withSpeaker, speakerOf, liveThreads, supersedeAll, supersedeFor, supBacklog, loreHits, loreInputHandler, loreDisplayHandler, stripLoreMark, splitAlias, itemRecords, cardOf, personCards, readReqExtra, linesOf, callJev, fitChoices, shrinkState, memParts, anchorDates, memLine, pickCast, memThreads, variantOf, addPerson, meetingsOf, meetFold, debugLog: () => debugLog, ui,
+      personWiki, wikiLines, scenesAll, sceneNodeText, nodeLine, wikiBacklog, tagExtras, wikiSection, MEM_VERBS,
       waitJob: async () => { await (job ?? Promise.resolve()); await (storyJob ?? Promise.resolve()); },
     };
   }
